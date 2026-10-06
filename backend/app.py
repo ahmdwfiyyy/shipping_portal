@@ -111,9 +111,15 @@ def destinations():
 
 @app.get("/api/rates-info")
 def rates_info():
-    """When the rate card file was last changed (shown in the page header)."""
+    """Rate card summary shown in the page header and hero (last change + counts)."""
+    zones, rates = load_rates()
     modified = datetime.fromtimestamp(os.path.getmtime(RATES_FILE), tz=timezone.utc)
-    return {"last_updated": modified.isoformat()}
+    return {
+        "last_updated": modified.isoformat(),
+        "couriers": int(rates["Courier"].nunique()),
+        "zones": int(rates["Zone Code"].nunique()),
+        "destinations": int(zones["Destination"].nunique()),
+    }
 
 
 @app.post("/api/calculate")

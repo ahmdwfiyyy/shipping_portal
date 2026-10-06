@@ -14,6 +14,7 @@ type Result = {
   is_cheapest: boolean;
 };
 
+type RatesInfo = { last_updated: string; couriers: number; zones: number; destinations: number };
 type Notice = { type: "success" | "error"; text: string } | null;
 type IconProps = { className?: string };
 
@@ -32,25 +33,23 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
-    const message =
-      typeof data.detail === "string" ? data.detail : "Please check your inputs";
+    const message = typeof data.detail === "string" ? data.detail : "Please check your inputs";
     throw new ApiError(message, res.status);
   }
   return data as T;
 }
 
-const errorText = (err: unknown) =>
-  err instanceof Error ? err.message : "Something went wrong";
+const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong");
 
 // ---------------------------------------------------------------------------
 // Shared styles and small pieces
 // ---------------------------------------------------------------------------
-const card =
-  "overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_8px_30px_rgba(15,23,42,0.05)]";
+const panel =
+  "relative overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-[0_12px_35px_rgba(7,27,85,0.08)]";
 const inputCls =
-  "h-12 w-full rounded-xl border border-slate-300 bg-white px-4 text-[15px] outline-none transition focus:border-[#075bd4] focus:ring-4 focus:ring-blue-100";
-const primaryBtn =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-[#075bd4] px-6 text-sm font-bold text-white shadow-[0_6px_16px_rgba(7,91,212,0.22)] transition hover:-translate-y-0.5 hover:bg-[#064ead] hover:shadow-[0_9px_20px_rgba(7,91,212,0.28)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none";
+  "h-12 w-full rounded-xl border border-blue-100 bg-brand-ice/40 px-4 text-[15px] outline-none transition hover:border-blue-200 focus:border-brand-blue focus:bg-white focus:ring-4 focus:ring-blue-100";
+const redBtn =
+  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-brand-red px-6 text-sm font-bold text-white shadow-[0_7px_18px_rgba(237,41,36,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-red-dark hover:shadow-[0_10px_22px_rgba(237,41,36,0.3)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none";
 
 function CalculatorIcon({ className = "h-5 w-5" }: IconProps) {
   return (
@@ -93,13 +92,8 @@ function FieldLabel({ children }: { children: ReactNode }) {
   return <label className="mb-2 block text-sm font-semibold text-slate-700">{children}</label>;
 }
 
-function CardHeader({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="border-b border-slate-100 px-5 py-5 sm:px-7">
-      <h1 className="text-xl font-bold tracking-[-0.02em] text-[#182e50]">{title}</h1>
-      <p className="mt-1 text-sm text-slate-500">{subtitle}</p>
-    </div>
-  );
+function TopBar() {
+  return <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-brand-red via-brand-bright to-brand-navy" />;
 }
 
 function Banner({ notice }: { notice: Notice }) {
@@ -116,50 +110,91 @@ function Banner({ notice }: { notice: Notice }) {
 }
 
 // Courier badge colour, chosen by name (falls back to slate for new couriers)
-const accents: Record<string, string> = { skynet: "#ef6a38", ninja: "#e73d4b", dhl: "#d6a700" };
+const accents: Record<string, string> = { skynet: "#0b3c91", ninja: "#ed2924", dhl: "#071b55" };
 function accentFor(name: string) {
   const key = Object.keys(accents).find((k) => name.toLowerCase().includes(k));
   return key ? accents[key] : "#475569";
 }
 
 // ---------------------------------------------------------------------------
-// Header
+// Header and hero
 // ---------------------------------------------------------------------------
-function Header({ ratesVersion }: { ratesVersion: number }) {
-  const [updated, setUpdated] = useState("");
-
-  // Re-fetch the date whenever a new rate card is uploaded (ratesVersion changes)
-  useEffect(() => {
-    api<{ last_updated: string }>("/api/rates-info")
-      .then((d) =>
-        setUpdated(
-          new Date(d.last_updated).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }),
-        ),
-      )
-      .catch(() => setUpdated(""));
-  }, [ratesVersion]);
+function Header({ info }: { info: RatesInfo | null }) {
+  const updated = info
+    ? new Date(info.last_updated).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
+    : "";
 
   return (
-    <header className="bg-[#182e50] text-white shadow-[0_1px_0_rgba(255,255,255,0.06)]">
-      <div className="mx-auto flex h-[76px] max-w-[1180px] items-center justify-between px-5 sm:px-8">
+    <header className="brand-grid relative overflow-hidden bg-brand-navy text-white shadow-[0_8px_30px_rgba(7,27,85,0.18)]">
+      <div className="brand-ribbon pointer-events-none absolute -right-16 -top-32 h-80 w-96 opacity-80" />
+      <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-brand-red via-white to-brand-bright" />
+
+      <div className="relative mx-auto flex h-[84px] max-w-[1180px] items-center justify-between px-5 sm:px-8">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-xl bg-white shadow-sm">
-            <img src={carsemLogo} alt="Carsem" draggable={false} className="h-8 w-8 select-none object-contain" />
+          <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-white/20">
+            <img src={carsemLogo} alt="Carsem" draggable={false} className="h-9 w-9 select-none object-contain" />
           </div>
           <div>
-            <p className="text-lg font-bold tracking-[-0.02em] sm:text-xl">Shipping Rate Portal</p>
-            <p className="hidden text-xs text-slate-300 sm:block">Malaysia domestic delivery</p>
+            <p className="text-lg font-extrabold tracking-[-0.02em] sm:text-xl">Shipping Rate Portal</p>
+            <p className="hidden text-xs font-medium tracking-wide text-blue-100 sm:block">Malaysia domestic delivery</p>
           </div>
         </div>
 
         {updated && (
-          <div className="hidden items-center gap-2 rounded-full bg-white/8 px-3 py-2 text-xs font-semibold text-slate-200 ring-1 ring-white/10 sm:flex">
-            <span className="h-2 w-2 rounded-full bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.15)]" />
+          <div className="hidden items-center gap-2 rounded-full bg-white/10 px-4 py-2.5 text-xs font-bold text-white ring-1 ring-white/20 backdrop-blur-sm sm:flex">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-60" />
+              <span className="relative h-2 w-2 rounded-full bg-brand-red" />
+            </span>
             Rates updated {updated}
           </div>
         )}
       </div>
     </header>
+  );
+}
+
+function Hero({ info }: { info: RatesInfo | null }) {
+  const stats: [string, string][] = info
+    ? [
+        [String(info.couriers), "Couriers"],
+        [String(info.zones), "Zones"],
+        [String(info.destinations), "Destinations"],
+      ]
+    : [];
+
+  return (
+    <section className="relative mb-7 overflow-hidden rounded-3xl bg-gradient-to-br from-brand-blue to-brand-navy px-6 py-7 text-white shadow-[0_18px_45px_rgba(7,27,85,0.18)] sm:px-9 sm:py-9">
+      <div className="absolute -right-20 -top-24 h-64 w-64 rounded-full border-[40px] border-white/5" />
+      <div className="absolute -bottom-20 right-24 h-44 w-44 rounded-full bg-brand-red/20 blur-2xl" />
+
+      <div className="relative flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+        <div className="max-w-2xl">
+          <div className="mb-3 flex items-center gap-2 text-xs font-extrabold uppercase tracking-[0.18em] text-blue-100">
+            <span className="h-0.5 w-7 bg-brand-red" />
+            Fast, clear, dependable
+          </div>
+          <h1 className="text-3xl font-extrabold leading-tight tracking-[-0.04em] sm:text-4xl">
+            The smarter way to ship
+            <span className="text-red-400"> across Malaysia.</span>
+          </h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-blue-100 sm:text-base">
+            Compare courier partners, see transparent pricing, and choose the right service in seconds.
+          </p>
+        </div>
+
+        {stats.length > 0 && (
+          <div className="grid grid-cols-3 gap-px overflow-hidden rounded-2xl bg-white/15 ring-1 ring-white/20 backdrop-blur-sm lg:min-w-[360px]">
+            {stats.map(([value, label]) => (
+              <div key={label} className="bg-white/8 px-4 py-4 text-center">
+                <strong className="block text-xl font-extrabold">{value}</strong>
+                <span className="mt-1 block text-[11px] font-semibold uppercase tracking-wide text-blue-100">{label}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -220,14 +255,19 @@ function Calculator() {
 
   return (
     <div className="space-y-6">
-      <section className={card}>
-        <CardHeader
-          title="Compare shipping rates"
-          subtitle="Enter your parcel details to find the best available courier rate."
-        />
+      <section className={panel}>
+        <TopBar />
+        <div className="border-b border-blue-50 bg-gradient-to-r from-white to-brand-ice px-5 py-5 sm:px-7">
+          <div className="mb-1 flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-brand-red">
+            <span className="h-1.5 w-1.5 rounded-full bg-brand-red" />
+            Shipment details
+          </div>
+          <h2 className="text-xl font-extrabold tracking-[-0.02em] text-brand-navy">Compare shipping rates</h2>
+          <p className="mt-1 text-sm text-slate-500">Enter your parcel details to find the best available courier rate.</p>
+        </div>
 
         <form onSubmit={compare} className="p-5 sm:p-7">
-          {error && <Banner notice={{ type: "error", text: error }} />}
+          <Banner notice={error ? { type: "error", text: error } : null} />
 
           <div>
             <FieldLabel>Destination</FieldLabel>
@@ -282,7 +322,7 @@ function Calculator() {
               </span>
             </div>
 
-            <button type="submit" disabled={loading} className={primaryBtn}>
+            <button type="submit" disabled={loading} className={redBtn}>
               {loading ? (
                 <>
                   <Spinner />
@@ -300,15 +340,17 @@ function Calculator() {
       </section>
 
       {results && (
-        <section className={`${card} animate-[fadein_0.4s_ease-out]`}>
-          <div className="flex flex-col gap-2 border-b border-slate-100 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7">
+        <section className={`${panel} animate-[fadein_0.4s_ease-out]`}>
+          <div className="flex flex-col gap-2 border-b border-blue-50 bg-gradient-to-r from-brand-navy to-brand-blue px-5 py-5 text-white sm:flex-row sm:items-center sm:justify-between sm:px-7">
             <div>
-              <h2 className="text-lg font-bold tracking-[-0.01em] text-[#182e50]">Available rates</h2>
-              <p className="mt-0.5 text-sm text-slate-500">
+              <h2 className="text-lg font-extrabold tracking-[-0.01em]">Available rates</h2>
+              <p className="mt-0.5 text-sm text-blue-100">
                 {results.length} courier option{results.length === 1 ? "" : "s"} for {form.destination}
               </p>
             </div>
-            <p className="text-xs font-medium text-slate-400">All prices in MYR</p>
+            <p className="w-fit rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold text-blue-50 ring-1 ring-white/15">
+              All prices in MYR
+            </p>
           </div>
 
           <div className="space-y-3 p-4 sm:p-6">
@@ -321,8 +363,8 @@ function Calculator() {
                   onClick={() => setSelected(rate.courier)}
                   className={`grid w-full grid-cols-[auto_1fr_auto] items-center gap-3 rounded-xl border p-4 text-left transition-all sm:grid-cols-[auto_1.45fr_0.8fr_0.85fr_auto] sm:gap-5 sm:px-5 ${
                     isSelected
-                      ? "border-[#075bd4] bg-blue-50/60 shadow-[0_5px_15px_rgba(7,91,212,0.08)]"
-                      : "border-slate-200 hover:-translate-y-0.5 hover:border-blue-200 hover:shadow-md"
+                      ? "border-brand-blue bg-brand-ice shadow-[0_6px_18px_rgba(11,60,145,0.12)] ring-1 ring-brand-blue/10"
+                      : "border-slate-200 hover:-translate-y-0.5 hover:border-blue-200 hover:bg-brand-ice/40 hover:shadow-md"
                   }`}
                 >
                   <span
@@ -336,7 +378,7 @@ function Calculator() {
                     <span className="flex flex-wrap items-center gap-2 font-bold text-slate-900">
                       {rate.courier}
                       {rate.is_cheapest && (
-                        <span className="rounded-full bg-emerald-500 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-white">
+                        <span className="rounded-full bg-brand-red px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-white shadow-sm">
                           Best rate
                         </span>
                       )}
@@ -358,7 +400,7 @@ function Calculator() {
 
                   <span className="text-right">
                     <span className="block text-[11px] font-semibold uppercase tracking-wide text-slate-400">Total</span>
-                    <span className="text-lg font-extrabold tabular-nums text-[#182e50]">RM {rate.total_cost.toFixed(2)}</span>
+                    <span className="text-lg font-extrabold tabular-nums text-brand-navy">RM {rate.total_cost.toFixed(2)}</span>
                   </span>
                 </button>
               );
@@ -366,8 +408,8 @@ function Calculator() {
           </div>
 
           {chosen && (
-            <div className="flex items-center gap-2 border-t border-slate-100 bg-slate-50/80 px-5 py-4 text-sm sm:px-7">
-              <span className="grid h-5 w-5 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+            <div className="flex items-center gap-2 border-t border-blue-50 bg-brand-ice px-5 py-4 text-sm sm:px-7">
+              <span className="grid h-5 w-5 place-items-center rounded-full bg-brand-red text-white">
                 <CheckIcon className="h-3 w-3" />
               </span>
               <span className="text-slate-500">Selected:</span>
@@ -461,11 +503,15 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
     }
   };
 
-  // ---- Not logged in: show the admin login form
+  // ---- Not logged in: admin login form
   if (!token) {
     return (
-      <section className={`${card} max-w-md`}>
-        <CardHeader title="Admin login" subtitle="Enter the admin password to update the rate card." />
+      <section className={`${panel} max-w-md`}>
+        <TopBar />
+        <div className="border-b border-blue-50 bg-gradient-to-r from-white to-brand-ice px-5 py-5 sm:px-7">
+          <h2 className="text-xl font-extrabold tracking-[-0.02em] text-brand-navy">Admin login</h2>
+          <p className="mt-1 text-sm text-slate-500">Enter the admin password to update the rate card.</p>
+        </div>
         <form onSubmit={login} className="p-5 sm:p-7">
           <Banner notice={notice} />
           <FieldLabel>Password</FieldLabel>
@@ -477,7 +523,7 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
             onChange={(e) => setPassword(e.target.value)}
             className={inputCls}
           />
-          <button type="submit" disabled={busy} className={`${primaryBtn} mt-6 w-full`}>
+          <button type="submit" disabled={busy} className={`${redBtn} mt-6 w-full`}>
             {busy ? (
               <>
                 <Spinner />
@@ -494,10 +540,11 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
 
   // ---- Logged in: upload screen
   return (
-    <section className={card}>
-      <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-5 sm:px-7">
+    <section className={panel}>
+      <TopBar />
+      <div className="flex items-start justify-between gap-4 border-b border-blue-50 bg-gradient-to-r from-white to-brand-ice px-5 py-5 sm:px-7">
         <div>
-          <h1 className="text-xl font-bold tracking-[-0.02em] text-[#182e50]">Upload courier rates</h1>
+          <h2 className="text-xl font-extrabold tracking-[-0.02em] text-brand-navy">Upload courier rates</h2>
           <p className="mt-1 text-sm text-slate-500">
             Replace the current rates with an Excel file containing the sheets <strong>Zone_Mapping</strong> and{" "}
             <strong>Rates</strong>.
@@ -506,7 +553,7 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
         <button
           type="button"
           onClick={() => logout()}
-          className="shrink-0 rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50"
+          className="shrink-0 rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-bold text-brand-blue transition hover:border-brand-red hover:text-brand-red"
         >
           Logout
         </button>
@@ -524,10 +571,10 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
           onDrop={handleDrop}
           className={`flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed px-5 text-center transition ${
             isDragging
-              ? "border-[#075bd4] bg-blue-50"
+              ? "border-brand-blue bg-blue-50"
               : file
-                ? "border-emerald-300 bg-emerald-50/50"
-                : "border-slate-300 bg-slate-50 hover:border-blue-300 hover:bg-blue-50/40"
+                ? "border-brand-red bg-red-50/50"
+                : "border-blue-200 bg-brand-ice/50 hover:border-brand-blue hover:bg-blue-50/60"
           }`}
         >
           <input
@@ -538,8 +585,8 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
           />
 
           <span
-            className={`mb-4 grid h-14 w-14 place-items-center rounded-2xl ${
-              file ? "bg-emerald-100 text-emerald-700" : "bg-blue-100 text-[#075bd4]"
+            className={`mb-4 grid h-14 w-14 place-items-center rounded-2xl shadow-sm ${
+              file ? "bg-red-100 text-brand-red" : "bg-brand-blue text-white"
             }`}
           >
             {file ? <CheckIcon className="h-7 w-7" /> : <UploadIcon className="h-7 w-7" />}
@@ -552,7 +599,7 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
         </label>
 
         <div className="mt-6 flex justify-end">
-          <button type="button" disabled={!file || busy} onClick={upload} className={primaryBtn}>
+          <button type="button" disabled={!file || busy} onClick={upload} className={redBtn}>
             {busy ? (
               <>
                 <Spinner />
@@ -577,6 +624,14 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
 export default function App() {
   const [activeTab, setActiveTab] = useState<"calculator" | "upload">("calculator");
   const [ratesVersion, setRatesVersion] = useState(0);
+  const [info, setInfo] = useState<RatesInfo | null>(null);
+
+  // Refresh the header/hero numbers on load and after every successful upload
+  useEffect(() => {
+    api<RatesInfo>("/api/rates-info")
+      .then(setInfo)
+      .catch(() => setInfo(null));
+  }, [ratesVersion]);
 
   const tab = (id: "calculator" | "upload", label: string, icon: ReactNode) => (
     <button
@@ -584,8 +639,8 @@ export default function App() {
       onClick={() => setActiveTab(id)}
       className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-5 py-3 text-sm font-bold transition-all sm:flex-none ${
         activeTab === id
-          ? "bg-[#075bd4] text-white shadow-[0_5px_14px_rgba(7,91,212,0.25)]"
-          : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
+          ? "bg-brand-blue text-white shadow-[0_5px_14px_rgba(11,60,145,0.25)]"
+          : "text-slate-600 hover:bg-brand-ice hover:text-brand-navy"
       }`}
     >
       {icon}
@@ -594,11 +649,13 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-[#f4f6f9] text-slate-950">
-      <Header ratesVersion={ratesVersion} />
+    <div className="min-h-screen bg-brand-ice text-slate-950">
+      <Header info={info} />
 
-      <main className="mx-auto max-w-[1180px] px-4 py-7 sm:px-8 sm:py-10">
-        <div className="mb-7 flex w-full gap-2 rounded-xl bg-slate-200/70 p-1.5 sm:w-fit">
+      <main className="panel-glow mx-auto max-w-[1180px] px-4 py-7 sm:px-8 sm:py-10">
+        <Hero info={info} />
+
+        <div className="mb-7 flex w-full gap-2 rounded-2xl border border-blue-100 bg-white p-1.5 shadow-[0_6px_24px_rgba(7,27,85,0.07)] sm:w-fit">
           {tab("calculator", "Rate Calculator", <CalculatorIcon />)}
           {tab("upload", "Admin Rate Upload", <UploadIcon />)}
         </div>
