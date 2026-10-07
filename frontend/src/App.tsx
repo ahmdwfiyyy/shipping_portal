@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import carsemLogo from "./assets/carsem-logo.png";
+import Landing from "./Landing";
+import { ArrowIcon, Banner, CalculatorIcon, CheckIcon, FieldLabel, Spinner, TopBar, UploadIcon, inputCls, panel, redBtn } from "./Ui";
+import type { Notice } from "./Ui";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -15,8 +18,6 @@ type Result = {
 };
 
 type RatesInfo = { last_updated: string; couriers: number; zones: number; destinations: number };
-type Notice = { type: "success" | "error"; text: string } | null;
-type IconProps = { className?: string };
 
 // ---------------------------------------------------------------------------
 // API helper - talks to the FastAPI backend (/api is proxied in dev and in nginx)
@@ -67,74 +68,6 @@ function readSession(): Session | null {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shared styles and small pieces
-// ---------------------------------------------------------------------------
-const panel =
-  "relative overflow-hidden rounded-2xl border border-blue-100 bg-white shadow-[0_12px_35px_rgba(7,27,85,0.08)]";
-const inputCls =
-  "h-12 w-full rounded-xl border border-blue-100 bg-brand-ice/40 px-4 text-[15px] outline-none transition hover:border-blue-200 focus:border-brand-blue focus:bg-white focus:ring-4 focus:ring-blue-100";
-const redBtn =
-  "inline-flex h-12 items-center justify-center gap-2 rounded-xl bg-brand-red px-6 text-sm font-bold text-white shadow-[0_7px_18px_rgba(237,41,36,0.24)] transition hover:-translate-y-0.5 hover:bg-brand-red-dark hover:shadow-[0_10px_22px_rgba(237,41,36,0.3)] disabled:translate-y-0 disabled:cursor-not-allowed disabled:opacity-60 disabled:shadow-none";
-
-function CalculatorIcon({ className = "h-5 w-5" }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <rect x="5" y="3" width="14" height="18" rx="3" />
-      <path d="M8 7h8M8.5 11.5h.01M12 11.5h.01M15.5 11.5h.01M8.5 15h.01M12 15h.01M15.5 15h.01" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function UploadIcon({ className = "h-5 w-5" }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-      <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 14v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-4" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function ArrowIcon({ className = "h-4 w-4" }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
-      <path d="m9 18 6-6-6-6" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function CheckIcon({ className = "h-4 w-4" }: IconProps) {
-  return (
-    <svg viewBox="0 0 24 24" className={className} fill="none" stroke="currentColor" strokeWidth="2.5" aria-hidden="true">
-      <path d="m5 12 4.5 4.5L19 7" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function Spinner() {
-  return <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" />;
-}
-
-function FieldLabel({ children }: { children: ReactNode }) {
-  return <label className="mb-2 block text-sm font-semibold text-slate-700">{children}</label>;
-}
-
-function TopBar() {
-  return <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-brand-red via-brand-bright to-brand-navy" />;
-}
-
-function Banner({ notice }: { notice: Notice }) {
-  if (!notice) return null;
-  const style =
-    notice.type === "success"
-      ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-      : "border-red-200 bg-red-50 text-red-800";
-  return (
-    <div role="alert" className={`mb-5 rounded-xl border px-4 py-3 text-sm font-medium ${style}`}>
-      {notice.text}
-    </div>
-  );
-}
-
 // Courier badge colour, chosen by name (falls back to slate for new couriers)
 const accents: Record<string, string> = { skynet: "#0b3c91", ninja: "#ed2924", dhl: "#071b55" };
 function accentFor(name: string) {
@@ -161,8 +94,8 @@ function Header({ info, role, onSignOut }: { info: RatesInfo | null; role: Role;
             <img src={carsemLogo} alt="Carsem" draggable={false} className="h-9 w-9 select-none object-contain" />
           </div>
           <div>
-            <p className="text-lg font-extrabold tracking-[-0.02em] sm:text-xl">Shipping Rate Portal</p>
-            <p className="hidden text-xs font-medium tracking-wide text-blue-100 sm:block">Malaysia domestic delivery</p>
+            <p className="text-lg font-extrabold tracking-[-0.02em] sm:text-xl">CARSEM SHIPPING PORTAL</p>
+            <p className="hidden text-xs font-medium tracking-wide text-blue-100 sm:block">COURIER RATE COMPARISON</p>
           </div>
         </div>
 
@@ -464,7 +397,7 @@ function Calculator() {
 // ---------------------------------------------------------------------------
 // Login page (shown before anything else)
 // ---------------------------------------------------------------------------
-function LoginPage({ onSignIn, notice }: { onSignIn: (token: string) => void; notice: Notice }) {
+function LoginPage({ onSignIn, onBack, notice }: { onSignIn: (token: string) => void; onBack: () => void; notice: Notice }) {
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -555,7 +488,12 @@ function LoginPage({ onSignIn, notice }: { onSignIn: (token: string) => void; no
           </form>
         </section>
 
-        <p className="mt-5 text-center text-xs text-blue-100">Need access? Ask your administrator for the password.</p>
+        <div className="mt-5 text-center text-xs text-blue-100">
+          <p>Need access? Ask your administrator for the password.</p>
+          <button type="button" onClick={onBack} className="mt-3 font-bold text-white underline-offset-4 hover:underline">
+            ← Back to home
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -760,6 +698,7 @@ function Admin({
 export default function App() {
   const [session, setSession] = useState<Session | null>(readSession);
   const [loginNotice, setLoginNotice] = useState<Notice>(null);
+  const [screen, setScreen] = useState<"landing" | "login">("landing");
   const [activeTab, setActiveTab] = useState<"calculator" | "upload">("calculator");
   const [ratesVersion, setRatesVersion] = useState(0);
   const [info, setInfo] = useState<RatesInfo | null>(null);
@@ -776,6 +715,7 @@ export default function App() {
     setInfo(null);
     setActiveTab("calculator");
     setLoginNotice(notice);
+    setScreen(notice ? "login" : "landing"); // an expired session goes straight to the login form
   };
 
   // If the server says the token has expired, go back to the login page
@@ -794,7 +734,13 @@ export default function App() {
       .catch(() => setInfo(null));
   }, [ratesVersion, loggedIn]);
 
-  if (!session) return <LoginPage onSignIn={signIn} notice={loginNotice} />;
+  if (!session) {
+    return screen === "landing" ? (
+      <Landing onSignIn={() => setScreen("login")} />
+    ) : (
+      <LoginPage onSignIn={signIn} onBack={() => setScreen("landing")} notice={loginNotice} />
+    );
+  }
 
   const tab = (id: "calculator" | "upload", label: string, icon: ReactNode) => (
     <button
