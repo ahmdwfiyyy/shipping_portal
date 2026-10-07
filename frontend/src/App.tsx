@@ -30,9 +30,15 @@ class ApiError extends Error {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, init);
+  const headers = new Headers(init?.headers);
+  const token = localStorage.getItem("token");
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+
+  const res = await fetch(path, { ...init, headers });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    // An expired or invalid token anywhere (except the login form itself) sends the person back to the login page
+    if (res.status === 401 && path !== "/api/login") window.dispatchEvent(new Event("auth-expired"));
     const message = typeof data.detail === "string" ? data.detail : "Please check your inputs";
     throw new ApiError(message, res.status);
   }
@@ -40,6 +46,26 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const errorText = (err: unknown) => (err instanceof Error ? err.message : "Something went wrong");
+
+// ---------------------------------------------------------------------------
+// Session: the login token is kept in localStorage; the server checks it on every request.
+// Reading the role here only decides what the screen shows - it is not a security check.
+// ---------------------------------------------------------------------------
+type Role = "admin" | "user";
+type Session = { token: string; role: Role };
+
+function readSession(): Session | null {
+  const token = localStorage.getItem("token");
+  if (!token) return null;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+    if (typeof payload.exp !== "number" || payload.exp * 1000 < Date.now()) throw new Error("expired");
+    return { token, role: payload.role === "admin" ? "admin" : "user" };
+  } catch {
+    localStorage.removeItem("token");
+    return null;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Shared styles and small pieces
@@ -119,7 +145,7 @@ function accentFor(name: string) {
 // ---------------------------------------------------------------------------
 // Header and hero
 // ---------------------------------------------------------------------------
-function Header({ info }: { info: RatesInfo | null }) {
+function Header({ info, role, onSignOut }: { info: RatesInfo | null; role: Role; onSignOut: () => void }) {
   const updated = info
     ? new Date(info.last_updated).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" })
     : "";
@@ -140,15 +166,27 @@ function Header({ info }: { info: RatesInfo | null }) {
           </div>
         </div>
 
-        {updated && (
-          <div className="hidden items-center gap-2 rounded-full bg-white/10 px-4 py-2.5 text-xs font-bold text-white ring-1 ring-white/20 backdrop-blur-sm sm:flex">
-            <span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-60" />
-              <span className="relative h-2 w-2 rounded-full bg-brand-red" />
-            </span>
-            Rates updated {updated}
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {updated && (
+            <div className="hidden items-center gap-2 rounded-full bg-white/10 px-4 py-2.5 text-xs font-bold text-white ring-1 ring-white/20 backdrop-blur-sm md:flex">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-white opacity-60" />
+                <span className="relative h-2 w-2 rounded-full bg-brand-red" />
+              </span>
+              Rates updated {updated}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="inline-flex items-center gap-2 rounded-full bg-white/10 px-4 py-2.5 text-xs font-bold text-white ring-1 ring-white/20 transition hover:bg-white/20"
+          >
+            {role === "admin" && (
+              <span className="rounded bg-brand-red px-1.5 py-0.5 text-[10px] uppercase tracking-wide">Admin</span>
+            )}
+            Sign out
+          </button>
+        </div>
       </div>
     </header>
   );
@@ -424,26 +462,17 @@ function Calculator() {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 2: Admin rate upload (login required)
+// Login page (shown before anything else)
 // ---------------------------------------------------------------------------
-function Admin({ onUploaded }: { onUploaded: () => void }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem("token"));
+function LoginPage({ onSignIn, notice }: { onSignIn: (token: string) => void; notice: Notice }) {
   const [password, setPassword] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [notice, setNotice] = useState<Notice>(null);
+  const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
+  const [error, setError] = useState("");
 
-  const logout = (message: Notice = null) => {
-    localStorage.removeItem("token");
-    setToken(null);
-    setFile(null);
-    setNotice(message);
-  };
-
-  const login = async (event: FormEvent) => {
+  const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setNotice(null);
+    setError("");
     setBusy(true);
     try {
       const data = await api<{ token: string }>("/api/login", {
@@ -451,9 +480,124 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
       });
-      localStorage.setItem("token", data.token);
-      setToken(data.token);
-      setPassword("");
+      onSignIn(data.token);
+    } catch (err) {
+      setError(errorText(err));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="brand-grid relative flex min-h-screen items-center justify-center overflow-hidden bg-brand-navy px-4 py-10">
+      <div className="brand-ribbon pointer-events-none absolute -right-16 -top-32 h-80 w-96 opacity-80" />
+      <div className="pointer-events-none absolute -bottom-24 -left-16 h-64 w-64 rounded-full border-[40px] border-white/5" />
+      <div className="pointer-events-none absolute -bottom-20 right-24 h-44 w-44 rounded-full bg-brand-red/20 blur-2xl" />
+      <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-brand-red via-white to-brand-bright" />
+
+      <div className="relative w-full max-w-md">
+        <div className="mb-6 flex items-center justify-center gap-3 text-white">
+          <div className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-2xl bg-white shadow-[0_6px_16px_rgba(0,0,0,0.25)] ring-2 ring-white/20">
+            <img src={carsemLogo} alt="Carsem" draggable={false} className="h-10 w-10 select-none object-contain" />
+          </div>
+          <div>
+            <p className="text-xl font-extrabold tracking-[-0.02em]">Shipping Rate Portal</p>
+            <p className="text-xs font-medium tracking-wide text-blue-100">Malaysia domestic delivery</p>
+          </div>
+        </div>
+
+        <section className={panel}>
+          <TopBar />
+          <div className="border-b border-blue-50 bg-gradient-to-r from-white to-brand-ice px-6 py-6">
+            <div className="mb-1 flex items-center gap-2 text-[11px] font-extrabold uppercase tracking-[0.14em] text-brand-red">
+              <span className="h-1.5 w-1.5 rounded-full bg-brand-red" />
+              Secure access
+            </div>
+            <h1 className="text-2xl font-extrabold tracking-[-0.02em] text-brand-navy">Welcome back</h1>
+            <p className="mt-1 text-sm text-slate-500">Sign in to compare courier rates.</p>
+          </div>
+
+          <form onSubmit={submit} className="p-6">
+            <Banner notice={error ? { type: "error", text: error } : notice} />
+
+            <FieldLabel>Password</FieldLabel>
+            <div className="relative">
+              <input
+                type={show ? "text" : "password"}
+                required
+                autoFocus
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className={`${inputCls} pr-20`}
+              />
+              <button
+                type="button"
+                onClick={() => setShow((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-xs font-bold text-brand-blue hover:text-brand-red"
+              >
+                {show ? "Hide" : "Show"}
+              </button>
+            </div>
+
+            <button type="submit" disabled={busy} className={`${redBtn} mt-6 w-full`}>
+              {busy ? (
+                <>
+                  <Spinner />
+                  Signing in...
+                </>
+              ) : (
+                <>
+                  Sign in
+                  <ArrowIcon />
+                </>
+              )}
+            </button>
+          </form>
+        </section>
+
+        <p className="mt-5 text-center text-xs text-blue-100">Need access? Ask your administrator for the password.</p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Tab 2: Admin rate upload (admin password required)
+// ---------------------------------------------------------------------------
+function Admin({
+  session,
+  onSignIn,
+  onSignOut,
+  onUploaded,
+}: {
+  session: Session;
+  onSignIn: (token: string) => void;
+  onSignOut: () => void;
+  onUploaded: () => void;
+}) {
+  const [password, setPassword] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [notice, setNotice] = useState<Notice>(null);
+  const [busy, setBusy] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // Staff who signed in with the site password must enter the admin password here
+  const adminLogin = async (event: FormEvent) => {
+    event.preventDefault();
+    setNotice(null);
+    setBusy(true);
+    try {
+      const data = await api<{ token: string; role: Role }>("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      if (data.role !== "admin") {
+        setNotice({ type: "error", text: "That password does not have admin access." });
+      } else {
+        onSignIn(data.token);
+        setPassword("");
+      }
     } catch (err) {
       setNotice({ type: "error", text: errorText(err) });
     } finally {
@@ -484,27 +628,19 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
     try {
       const body = new FormData();
       body.append("file", file);
-      const data = await api<{ message: string }>("/api/upload-rates", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body,
-      });
+      const data = await api<{ message: string }>("/api/upload-rates", { method: "POST", body });
       setNotice({ type: "success", text: data.message });
       setFile(null);
       onUploaded();
     } catch (err) {
-      if (err instanceof ApiError && err.status === 401) {
-        logout({ type: "error", text: "Session expired. Please log in again." });
-      } else {
-        setNotice({ type: "error", text: errorText(err) });
-      }
+      setNotice({ type: "error", text: errorText(err) });
     } finally {
       setBusy(false);
     }
   };
 
-  // ---- Not logged in: admin login form
-  if (!token) {
+  // ---- Not an admin yet: admin password form
+  if (session.role !== "admin") {
     return (
       <section className={`${panel} max-w-md`}>
         <TopBar />
@@ -512,13 +648,13 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
           <h2 className="text-xl font-extrabold tracking-[-0.02em] text-brand-navy">Admin login</h2>
           <p className="mt-1 text-sm text-slate-500">Enter the admin password to update the rate card.</p>
         </div>
-        <form onSubmit={login} className="p-5 sm:p-7">
+        <form onSubmit={adminLogin} className="p-5 sm:p-7">
           <Banner notice={notice} />
-          <FieldLabel>Password</FieldLabel>
+          <FieldLabel>Admin password</FieldLabel>
           <input
             type="password"
             required
-            autoComplete="current-password"
+            autoComplete="off"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             className={inputCls}
@@ -527,10 +663,10 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
             {busy ? (
               <>
                 <Spinner />
-                Signing in...
+                Checking...
               </>
             ) : (
-              "Login"
+              "Unlock admin"
             )}
           </button>
         </form>
@@ -538,7 +674,7 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
     );
   }
 
-  // ---- Logged in: upload screen
+  // ---- Admin: upload screen
   return (
     <section className={panel}>
       <TopBar />
@@ -552,7 +688,7 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
         </div>
         <button
           type="button"
-          onClick={() => logout()}
+          onClick={onSignOut}
           className="shrink-0 rounded-lg border border-blue-100 bg-white px-4 py-2 text-sm font-bold text-brand-blue transition hover:border-brand-red hover:text-brand-red"
         >
           Logout
@@ -622,16 +758,43 @@ function Admin({ onUploaded }: { onUploaded: () => void }) {
 // App shell
 // ---------------------------------------------------------------------------
 export default function App() {
+  const [session, setSession] = useState<Session | null>(readSession);
+  const [loginNotice, setLoginNotice] = useState<Notice>(null);
   const [activeTab, setActiveTab] = useState<"calculator" | "upload">("calculator");
   const [ratesVersion, setRatesVersion] = useState(0);
   const [info, setInfo] = useState<RatesInfo | null>(null);
 
-  // Refresh the header/hero numbers on load and after every successful upload
+  const signIn = (token: string) => {
+    localStorage.setItem("token", token);
+    setLoginNotice(null);
+    setSession(readSession());
+  };
+
+  const signOut = (notice: Notice = null) => {
+    localStorage.removeItem("token");
+    setSession(null);
+    setInfo(null);
+    setActiveTab("calculator");
+    setLoginNotice(notice);
+  };
+
+  // If the server says the token has expired, go back to the login page
   useEffect(() => {
+    const onExpired = () => signOut({ type: "error", text: "Your session has expired. Please sign in again." });
+    window.addEventListener("auth-expired", onExpired);
+    return () => window.removeEventListener("auth-expired", onExpired);
+  }, []);
+
+  // Refresh the header/hero numbers after login and after every successful upload
+  const loggedIn = session !== null;
+  useEffect(() => {
+    if (!loggedIn) return;
     api<RatesInfo>("/api/rates-info")
       .then(setInfo)
       .catch(() => setInfo(null));
-  }, [ratesVersion]);
+  }, [ratesVersion, loggedIn]);
+
+  if (!session) return <LoginPage onSignIn={signIn} notice={loginNotice} />;
 
   const tab = (id: "calculator" | "upload", label: string, icon: ReactNode) => (
     <button
@@ -650,7 +813,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-brand-ice text-slate-950">
-      <Header info={info} />
+      <Header info={info} role={session.role} onSignOut={() => signOut()} />
 
       <main className="panel-glow mx-auto max-w-[1180px] px-4 py-7 sm:px-8 sm:py-10">
         <Hero info={info} />
@@ -660,7 +823,16 @@ export default function App() {
           {tab("upload", "Admin Rate Upload", <UploadIcon />)}
         </div>
 
-        {activeTab === "calculator" ? <Calculator /> : <Admin onUploaded={() => setRatesVersion((v) => v + 1)} />}
+        {activeTab === "calculator" ? (
+          <Calculator />
+        ) : (
+          <Admin
+            session={session}
+            onSignIn={signIn}
+            onSignOut={() => signOut()}
+            onUploaded={() => setRatesVersion((v) => v + 1)}
+          />
+        )}
       </main>
     </div>
   );

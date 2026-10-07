@@ -7,13 +7,15 @@ services:
       # Values come from a local ".env" file (see .env.example)
       - SECRET_KEY=${SECRET_KEY:-change-me}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - SITE_PASSWORD=${SITE_PASSWORD:-staff123}
     volumes:
       # rates.xlsx MUST exist on your machine first, otherwise Docker creates a folder
       - ./backend/rates.xlsx:/app/rates.xlsx
-
+ 
   frontend:
     build: ./frontend
     ports:
       - "80:80"
     depends_on:
       - backend
+ 
