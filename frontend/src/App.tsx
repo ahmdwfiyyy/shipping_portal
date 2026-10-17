@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
 import carsemLogo from "./assets/carsem-logo.png";
 import Landing from "./Landing";
-import { ArrowIcon, Banner, CalculatorIcon, CheckIcon, FieldLabel, Spinner, TopBar, UploadIcon, inputCls, panel, redBtn } from "./Ui";
+import { ArrowIcon, Banner, Brand, CalculatorIcon, CheckIcon, FieldLabel, Spinner, TopBar, UploadIcon, inputCls, panel, redBtn } from "./Ui";
 import type { Notice } from "./Ui";
 
 // ---------------------------------------------------------------------------
@@ -89,15 +89,7 @@ function Header({ info, role, onSignOut }: { info: RatesInfo | null; role: Role;
       <div className="absolute inset-x-0 bottom-0 h-1 bg-gradient-to-r from-brand-red via-white to-brand-bright" />
 
       <div className="relative mx-auto flex h-[84px] max-w-[1180px] items-center justify-between px-5 sm:px-8">
-        <div className="flex items-center gap-3">
-          <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-white/20">
-            <img src={carsemLogo} alt="Carsem" draggable={false} className="h-9 w-9 select-none object-contain" />
-          </div>
-          <div>
-            <p className="text-lg font-extrabold tracking-[-0.02em] sm:text-xl">CARSEM SHIPPING PORTAL</p>
-            <p className="hidden text-xs font-medium tracking-wide text-blue-100 sm:block">COURIER RATE COMPARISON</p>
-          </div>
-        </div>
+        <Brand />
 
         <div className="flex items-center gap-3">
           {updated && (
@@ -170,7 +162,7 @@ function Hero({ info }: { info: RatesInfo | null }) {
 }
 
 // ---------------------------------------------------------------------------
-// Tab 1: Rate calculator (public)
+// Tab 1: Rate calculator (any signed-in user)
 // ---------------------------------------------------------------------------
 type FormKey = "length" | "width" | "height" | "weight";
 const sizeFields: [FormKey, string, string][] = [
@@ -395,7 +387,7 @@ function Calculator() {
 }
 
 // ---------------------------------------------------------------------------
-// Login page (shown before anything else)
+// Login page (opened from the landing page, or after a session expires)
 // ---------------------------------------------------------------------------
 function LoginPage({ onSignIn, onBack, notice }: { onSignIn: (token: string) => void; onBack: () => void; notice: Notice }) {
   const [password, setPassword] = useState("");

@@ -2,15 +2,16 @@
 
 A web app that compares courier shipping costs for a parcel and lets an admin upload new rate cards.
 
-- **Rate Calculator (public):** choose a destination, enter box size and weight, and see every courier's price, cheapest first, with a "Best Rate" badge.
-- **Admin Rate Upload (password protected):** log in and upload a new Excel rate card to replace the current rates.
+- **Landing page (public):** explains what the portal does and how chargeable weight works. No rates are shown before sign-in.
+- **Rate Calculator (staff password):** choose a destination, enter box size and weight, and see every courier's price, cheapest first, with a "Best rate" badge.
+- **Admin Rate Upload (admin password):** upload a new Excel rate card to replace the current rates. Staff signed in with the site password are asked for the admin password first.
 
 ## Tech stack
 
 | Part | Technology |
 | --- | --- |
 | Backend | FastAPI (Python), pandas, openpyxl, PyJWT, passlib |
-| Frontend | React + Vite |
+| Frontend | React + TypeScript + Tailwind CSS (Vite) |
 | Rate data | `backend/rates.xlsx` |
 | Packaging | Docker and Docker Compose (nginx serves the frontend) |
 
@@ -19,7 +20,7 @@ A web app that compares courier shipping costs for a parcel and lets an admin up
 ```
 shipping-portal/
 ├── docker-compose.yml
-├── .env.example
+├── env.example             # copy to .env and fill in real values
 ├── .gitignore
 ├── backend/
 │   ├── app.py              # API: login, calculate, destinations, upload-rates
@@ -28,14 +29,20 @@ shipping-portal/
 │   └── Dockerfile
 └── frontend/
     ├── package.json
-    ├── vite.config.js
+    ├── vite.config.ts
+    ├── tsconfig.json
     ├── index.html
     ├── nginx.conf
     ├── vercel.json         # used when deploying the frontend to Vercel
     ├── Dockerfile
     └── src/
-        ├── main.jsx
-        └── App.jsx         # the whole UI; colours and fonts are in the `theme` object at the top
+        ├── main.tsx
+        ├── index.css       # Tailwind setup, brand colours (@theme) and fonts
+        ├── App.tsx         # session handling, header, calculator, login and admin upload
+        ├── Landing.tsx     # public landing page
+        ├── Ui.tsx          # shared styles, icons and small components
+        ├── vite-env.d.ts
+        └── assets/carsem-logo.png
 ```
 
 ## Requirements
@@ -75,10 +82,11 @@ After the first time, you only need to activate the virtual environment and run 
 
 ## Run with Docker
 
-1. Copy `.env.example` to `.env` and set your own values:
+1. Copy `env.example` to `.env` and set your own values:
    ```
    SECRET_KEY=a-long-random-string
    ADMIN_PASSWORD=a-strong-password
+   SITE_PASSWORD=password-you-give-to-staff
    ```
 2. Make sure `backend/rates.xlsx` exists (Docker creates a folder with that name if it doesn't).
 3. Run:
@@ -94,7 +102,8 @@ Nginx serves the frontend and forwards `/api` to the backend container. Rate car
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SECRET_KEY` | `change-me-in-production` | Signs login tokens. Always set your own in production. |
-| `ADMIN_PASSWORD` | `admin123` | Admin login password. Change it before real use. |
+| `ADMIN_PASSWORD` | `admin123` | Admin password. Also works at the normal sign-in and gives admin rights. Change it before real use. |
+| `SITE_PASSWORD` | `staff123` | Shared password for staff who use the calculator. Change it before real use. |
 | `RATES_FILE` | `backend/rates.xlsx` | Path of the rate card. Point it at a persistent disk (for example `/data/rates.xlsx`) when hosting. |
 
 ## Rate card format (`rates.xlsx`)
@@ -130,9 +139,10 @@ Example: a 40 x 30 x 30 cm box weighing 1.2 kg has a volumetric weight of 7.2 kg
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| GET | `/api/destinations` | Public | List destinations for the dropdown |
-| POST | `/api/calculate` | Public | Compare couriers for a parcel |
-| POST | `/api/login` | Public | Exchange the admin password for a token valid for 8 hours |
+| POST | `/api/login` | Public | Exchange the site or admin password for a token (role `user` or `admin`) valid for 8 hours |
+| GET | `/api/destinations` | Signed in | List destinations for the dropdown |
+| GET | `/api/rates-info` | Signed in | When the rate card was last changed, plus courier, zone and destination counts |
+| POST | `/api/calculate` | Signed in | Compare couriers for a parcel |
 | POST | `/api/upload-rates` | Admin (Bearer token) | Replace the rate card with an uploaded `.xlsx` or `.xls` file |
 
 An upload is rejected, and the current rates are left untouched, if the file is missing a required sheet or column.
@@ -141,13 +151,13 @@ An upload is rejected, and the current rates are left untouched, if the file is 
 
 The frontend and backend can be hosted separately:
 
-1. **Backend on Render:** create a Web Service from the GitHub repo with Root Directory `backend` and the Docker runtime. Set `SECRET_KEY`, `ADMIN_PASSWORD` and `PORT=8000`.
+1. **Backend on Render:** create a Web Service from the GitHub repo with Root Directory `backend` and the Docker runtime. Set `SECRET_KEY`, `ADMIN_PASSWORD`, `SITE_PASSWORD` and `PORT=8000`.
 2. **Frontend on Vercel:** edit `frontend/vercel.json` and replace `YOUR-BACKEND-NAME.onrender.com` with the Render address. Import the repo with Root Directory `frontend`.
 
 Notes:
 
 - On Render's free tier the disk is not persistent, so a rate card uploaded through the admin page is lost when the service restarts or redeploys. To change rates permanently, replace `backend/rates.xlsx` in the repo and push. For uploads that persist, use a paid instance with a disk and set `RATES_FILE`.
-- The calculator and its API are public. Anyone with the web address can see prices. Restrict access if the rates are confidential.
+- Everyone with the site password can see prices. Change `SITE_PASSWORD` if it is shared outside the team.
 
 ## Git workflow
 
@@ -166,7 +176,8 @@ git checkout -b prettier-ui
 
 ## Security checklist before real use
 
-- [ ] Change `ADMIN_PASSWORD` from the default
+- [ ] Change `ADMIN_PASSWORD` and `SITE_PASSWORD` from the defaults
 - [ ] Set a long random `SECRET_KEY`
 - [ ] Never commit your `.env` file
-- [ ] Decide whether the calculator should require a login
+- [ ] Replace the `YOUR-BACKEND-NAME` placeholder in `frontend/vercel.json` if deploying to Vercel
+- [ ] Consider limiting CORS `allow_origins` in `backend/app.py` to your own domain

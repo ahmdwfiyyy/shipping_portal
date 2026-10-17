@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
-import carsemLogo from "./assets/carsem-logo.png";
 import {
   ArrowIcon,
+  Brand,
   CalculatorIcon,
   CheckIcon,
   ScaleIcon,
@@ -65,15 +65,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
 
         <div className="relative mx-auto max-w-[1180px] px-5 sm:px-8">
           <nav className="flex h-[84px] items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="grid h-12 w-12 shrink-0 place-items-center overflow-hidden rounded-xl bg-white shadow-[0_6px_16px_rgba(0,0,0,0.2)] ring-2 ring-white/20">
-                <img src={carsemLogo} alt="Carsem" draggable={false} className="h-9 w-9 select-none object-contain" />
-              </div>
-              <div>
-                <p className="text-lg font-extrabold tracking-[-0.02em] sm:text-xl">CARSEM SHIPPING PORTAL</p>
-                <p className="hidden text-xs font-medium tracking-wide text-blue-100 sm:block">COURIER RATE COMPARISON</p>
-              </div>
-            </div>
+            <Brand />
             <button
               type="button"
               onClick={onSignIn}
