@@ -39,20 +39,20 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
     ],
     [
       <UploadIcon className="h-6 w-6" />,
-      "Rates that stay up to date",
-      "Administrators replace the rate card by uploading an Excel file. The site picks it up straight away.",
+      "Quotes saved and printable",
+      "Submit a comparison with your reference and remarks, then print it or save it as a PDF quotation.",
     ],
     [
       <ShieldIcon className="h-6 w-6" />,
       "Private to your team",
-      "Sign-in is required before anyone can see rates, and updating the rate card needs a separate admin password.",
+      "Everyone signs in with their own account. Only administrators can see the history and dashboard or update the rate card.",
     ],
   ];
 
   const steps: [string, string][] = [
-    ["Sign in", "Use the password your administrator gave you."],
+    ["Sign in", "Use the account your administrator created for you."],
     ["Enter parcel details", "Search for the destination country, then add the length, width, height and actual weight."],
-    ["Compare and choose", "Review the price from every courier and pick the best option for the shipment."],
+    ["Compare and submit", "Review the price from every courier, pick the best option and submit it to the history."],
   ];
 
   return (
