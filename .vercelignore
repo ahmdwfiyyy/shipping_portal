@@ -1,0 +1,7 @@
+# Never upload local data or the confidential rate card to Vercel
+backend/data/
+backend/.venv/
+backend/tests/
+backend/*.xlsx
+frontend/node_modules/
+**/__pycache__/

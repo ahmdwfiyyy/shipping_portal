@@ -6,10 +6,14 @@ services:
     environment:
       # Values come from a local ".env" file (see env.example)
       - SECRET_KEY=${SECRET_KEY:-change-me}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
-      - SITE_PASSWORD=${SITE_PASSWORD:-staff123}
+      - ADMIN_FULL_NAME=${ADMIN_FULL_NAME:-Administrator}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/portal.db}
     volumes:
-      # The rate card MUST exist on your machine first, otherwise Docker creates a folder
+      # Accounts, quote history and rate card versions live here, so they survive restarts
+      - ./backend/data:/app/data
+      # Imported once into an empty database. The file MUST exist first, otherwise Docker creates a folder
       - type: bind
         source: "./backend/DATA EXTRACT Rev1.xlsx"
         target: "/app/DATA EXTRACT Rev1.xlsx"

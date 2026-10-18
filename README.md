@@ -1,60 +1,65 @@
-# Shipping Rate Portal
+# Carsem Shipping Portal
 
-A web app that compares international courier rates (DHL, FedEx, UPS) for shipping a parcel from Malaysia, and lets an admin upload new rate cards.
+A web app for comparing international courier rates (DHL, FedEx, UPS) for shipments from Malaysia, keeping a history of submitted quotes, and giving administrators a dashboard and control over the rate card.
 
-- **Landing page (public):** explains what the portal does and how chargeable weight works. No rates are shown before sign-in.
-- **Rate Calculator (staff password):** search for the destination country, enter box size and weight, and see every service's price, cheapest first, with a "Best rate" badge.
-- **Admin Rate Upload (admin password):** upload a new Excel rate card to replace the current rates. Staff signed in with the site password are asked for the admin password first.
+## What it does
+
+**Staff** (own login)
+- Search 250 destination countries, enter one or more boxes (size in metres, weight in kg) and compare every service, cheapest first.
+- See how each price was worked out: weight break or per-kg rate, plus the fuel surcharge.
+- Pick a service, add a customer reference and remarks, and **submit it to the history**. The full comparison is saved, and the quotation can be printed or saved as a PDF.
+
+**Admins** (everything staff can do, plus)
+- **Dashboard:** quotes, spend, average cost, cost per kg, savings compared with the most expensive option, and how often the cheapest service was picked. Charts show quotes over time, top destinations, price bands, carrier share and cost per kg by carrier. Every chart has a table view.
+- **History:** every submitted quote, with search, filters (dates, carrier, staff), the printable quotation and **Export to Excel**.
+- **Rate cards:** see the card in use and its data check, upload a new card with a **preview of what changes**, keep every version (download any, **switch back** in one click), and browse every country's price tables.
+- **Users:** create staff and admin accounts, reset passwords, deactivate accounts.
+- **Settings:** fuel surcharge per carrier, and the "rate card is out of date" warning age.
+- **Activity log:** sign-ins, quotes, uploads, account and settings changes.
 
 ## Tech stack
 
 | Part | Technology |
 | --- | --- |
-| Backend | FastAPI (Python), pandas, openpyxl, PyJWT, passlib |
-| Frontend | React + TypeScript + Tailwind CSS (Vite) |
-| Rate data | `backend/DATA EXTRACT Rev1.xlsx` (git-ignored, see below) |
-| Packaging | Docker and Docker Compose (nginx serves the frontend) |
+| Backend | FastAPI (Python), SQLAlchemy, pandas, openpyxl, PyJWT, passlib |
+| Database | SQLite locally, PostgreSQL in production (e.g. Neon on Vercel) |
+| Frontend | React + TypeScript + Tailwind CSS (Vite), Recharts for the dashboard |
+| Hosting | Vercel (static site + Python serverless function), or Docker Compose |
 
 ## Project structure
 
 ```
-shipping-portal/
+shipping_portal/
+├── vercel.json             # Vercel: builds the frontend, serves the API from api/index.py
+├── api/index.py            # Vercel entry point for the FastAPI backend
+├── requirements.txt        # Python packages for Vercel (points at backend/requirements.txt)
 ├── docker-compose.yml
 ├── env.example             # copy to .env and fill in real values
-├── .gitignore
 ├── backend/
-│   ├── app.py              # API: login, calculate, destinations, upload-rates
-│   ├── DATA EXTRACT Rev1.xlsx  # current rate card (confidential, not in git)
-│   ├── requirements.txt
-│   └── Dockerfile
-└── frontend/
-    ├── package.json
-    ├── vite.config.ts
-    ├── tsconfig.json
-    ├── index.html
-    ├── nginx.conf
-    ├── vercel.json         # used when deploying the frontend to Vercel
-    ├── Dockerfile
-    └── src/
-        ├── main.tsx
-        ├── index.css       # Tailwind setup, brand colours (@theme) and fonts
-        ├── App.tsx         # session handling, header, calculator, login and admin upload
-        ├── Landing.tsx     # public landing page
-        ├── Ui.tsx          # shared styles, icons and small components
-        ├── vite-env.d.ts
-        └── assets/carsem-logo.png
+│   ├── app.py              # login, account, calculator and quote endpoints
+│   ├── admin.py            # admin endpoints: dashboard, history, rate cards, users, settings, activity
+│   ├── pricing.py          # reading rate cards and calculating prices (no web code)
+│   ├── auth.py             # passwords, tokens, roles, login lockout
+│   ├── store.py            # settings, active rate card cache, first-run setup
+│   ├── db.py               # database tables
+│   ├── tests/              # automated tests (pytest)
+│   ├── data/               # local SQLite database (not in git)
+│   └── DATA EXTRACT Rev1.xlsx  # confidential rate card, imported on first run (not in git)
+└── frontend/src/
+    ├── App.tsx             # header, navigation, which pages each role sees
+    ├── Calculator.tsx      # rate comparison and "Submit to history"
+    ├── QuoteSheet.tsx      # printable quotation
+    ├── LoginPage.tsx       # sign in and change password
+    ├── Landing.tsx         # public landing page
+    ├── DestinationSearch.tsx
+    ├── admin/              # Dashboard, History, RateCards, Users, Settings (+ activity log)
+    ├── api.ts              # API helper, types, formatting
+    └── Ui.tsx              # shared styles, icons and components
 ```
 
-## Requirements
+## Run locally
 
-- Python 3.10 or newer
-- Node.js 18 or newer
-- Git
-- Docker Desktop (only if you want to run with Docker)
-
-## Run locally (development)
-
-You need two terminals.
+You need two terminals. Put the rate card at `backend/DATA EXTRACT Rev1.xlsx` first; it is imported into the database the first time the backend starts. It is confidential, so it is listed in `.gitignore` and does not come with the repository.
 
 **Terminal 1: backend**
 
@@ -66,8 +71,6 @@ pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
 
-API docs are at http://localhost:8000/docs
-
 **Terminal 2: frontend**
 
 ```bash
@@ -76,37 +79,60 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. The dev server forwards `/api` requests to port 8000.
+Open http://localhost:5173 and sign in as `admin` / `admin123` (or the `ADMIN_USERNAME` / `ADMIN_PASSWORD` you set). Then add staff accounts under **Users**. API docs are at http://localhost:8000/docs.
 
-Before starting the backend, copy the rate card into `backend/DATA EXTRACT Rev1.xlsx`. It is confidential, so it is listed in `.gitignore` and does not come with the repository.
+The local database is `backend/data/portal.db`. Delete it to start again from scratch.
 
-After the first time, you only need to activate the virtual environment and run the `uvicorn` and `npm run dev` commands again.
+### Tests
+
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
+
+The tests use a small made-up rate card and a throw-away database. They never touch the real rate card or your local data.
+
+## Deploy to Vercel
+
+Vercel does not keep files between requests, so accounts, quote history and rate cards are stored in a **PostgreSQL** database.
+
+1. **Create a database.** In the Vercel project go to **Storage → Create → Neon (Postgres)**, or create one at neon.tech. Copy its connection string.
+2. **Import the repository** in Vercel. Keep the Root Directory as the repository root; `vercel.json` handles the build.
+3. **Set environment variables** (Project → Settings → Environment Variables):
+
+   | Variable | Value |
+   | --- | --- |
+   | `DATABASE_URL` | the Postgres connection string (added automatically if you used Vercel Storage) |
+   | `SECRET_KEY` | a long random string, at least 32 characters |
+   | `ADMIN_USERNAME` / `ADMIN_PASSWORD` / `ADMIN_FULL_NAME` | the first admin account |
+
+4. **Deploy**, sign in as the admin, open **Rate Cards** and upload `DATA EXTRACT Rev1.xlsx`. It is not in git, so it is never deployed with the code.
+5. Add staff accounts under **Users**.
+
+Limits to know: Vercel functions accept uploads up to 4.5 MB (the rate card is about 0.35 MB), and the first request after a quiet period takes a few seconds while the function starts.
 
 ## Run with Docker
 
-1. Copy `env.example` to `.env` and set your own values:
-   ```
-   SECRET_KEY=a-long-random-string
-   ADMIN_PASSWORD=a-strong-password
-   SITE_PASSWORD=password-you-give-to-staff
-   ```
+1. Copy `env.example` to `.env` and set your own values.
 2. Make sure `backend/DATA EXTRACT Rev1.xlsx` exists (Docker creates a folder with that name if it doesn't).
-3. Run:
-   ```bash
-   docker compose up --build
-   ```
-4. Open http://localhost.
+3. Run `docker compose up --build` and open http://localhost.
 
-Nginx serves the frontend and forwards `/api` to the backend container. Rate card uploads are written to `backend/DATA EXTRACT Rev1.xlsx` on your machine, so they survive restarts.
+The database is kept in `backend/data/` on your machine, so history survives restarts.
 
 ## Configuration
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `SECRET_KEY` | `change-me-in-production` | Signs login tokens. Always set your own in production. |
-| `ADMIN_PASSWORD` | `admin123` | Admin password. Also works at the normal sign-in and gives admin rights. Change it before real use. |
-| `SITE_PASSWORD` | `staff123` | Shared password for staff who use the calculator. Change it before real use. |
-| `RATES_FILE` | `backend/DATA EXTRACT Rev1.xlsx` | Path of the rate card. Point it at a persistent disk (for example `/data/rates.xlsx`) when hosting. |
+| `SECRET_KEY` | `change-me-in-production` | Signs login tokens. Always set your own. |
+| `DATABASE_URL` | SQLite file in `backend/data/` | Database. Must be PostgreSQL on Vercel. |
+| `ADMIN_USERNAME` | `admin` | First admin account, created only when there are no users yet. |
+| `ADMIN_PASSWORD` | `admin123` | Password of that first admin. Change it before real use. |
+| `ADMIN_FULL_NAME` | `Administrator` | Name shown for that admin. |
+| `SEED_RATE_CARD` | `backend/DATA EXTRACT Rev1.xlsx` | Rate card imported when the database has none. |
+| `TZ_OFFSET_HOURS` | `8` | Time zone for dashboard days and date filters (Malaysia is UTC+8). |
+
+Fuel surcharges and the rate card age warning are set by admins in the app, under **Settings**.
 
 ## Rate card format (`DATA EXTRACT Rev1.xlsx`)
 
@@ -133,67 +159,52 @@ The workbook must have two sheets with these exact names. Extra columns are allo
 | WeightFrom, WeightTo | 7.5, 7.5 | Weight break (per shipment) or weight band (per kg) |
 | RateMYR | 87.89 | Price in MYR |
 
+When a new card is uploaded, the admin first sees a data check (prices missing for a zone, heavier weights costing less, similar country names with different services) and what changes compared with the card in use.
+
 ## How the price is calculated
 
 ```
-CBM               = length x width x height        (sizes in metres)
-Volumetric weight = CBM x 200                      (same as cm³ / 5000)
-Chargeable weight = max(actual weight, volumetric weight)
+For each box (sizes in metres):
+  CBM               = length x width x height
+  Volumetric weight = CBM x 200                      (same as cm³ / 5000)
+  Box charged at    = max(actual weight, volumetric weight)
 
-Up to the heaviest "Per Shipment" break of the service:
+Chargeable weight = sum of every box's charged weight x its quantity
+
+For each service, up to its heaviest "Per Shipment" break:
   billed weight = the first weight break at or above the chargeable weight
-  total         = that break's price
-
+  base price    = that break's price
 Above it:
   billed weight = chargeable weight rounded up to a whole kg
-  total         = billed weight x the "Per KG" rate of the band it falls in
+  base price    = billed weight x the "Per KG" rate of the band it falls in
+
+Total = base price + fuel surcharge (base price x the carrier's fuel %)
 ```
 
-Example: a 0.4 x 0.3 x 0.3 m box (0.036 CBM) weighing 1.2 kg has a volumetric weight of 7.2 kg, so each service is priced at its 7.5 kg break. Services with no rate for the weight (for example, too heavy) are left out of the results.
+Example: one 0.4 x 0.3 x 0.3 m box (0.036 CBM) weighing 1.2 kg has a volumetric weight of 7.2 kg, so each service is priced at its 7.5 kg break. Services with no rate for the weight (for example, too heavy) are left out of the results.
 
 ## API endpoints
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| POST | `/api/login` | Public | Exchange the site or admin password for a token (role `user` or `admin`) valid for 8 hours |
-| GET | `/api/destinations` | Signed in | Countries for the search box, with how many services serve each |
-| GET | `/api/rates-info` | Signed in | When the rate card was last changed, plus carrier, service and destination counts |
-| POST | `/api/calculate` | Signed in | Compare every service for a parcel |
-| POST | `/api/upload-rates` | Admin (Bearer token) | Replace the rate card with an uploaded `.xlsx` or `.xls` file |
-
-An upload is rejected, and the current rates are left untouched, if the file is missing a required sheet or column.
-
-## Deployment
-
-The frontend and backend can be hosted separately:
-
-1. **Backend on Render:** create a Web Service from the GitHub repo with Root Directory `backend` and the Docker runtime. Set `SECRET_KEY`, `ADMIN_PASSWORD`, `SITE_PASSWORD` and `PORT=8000`.
-2. **Frontend on Vercel:** edit `frontend/vercel.json` and replace `YOUR-BACKEND-NAME.onrender.com` with the Render address. Import the repo with Root Directory `frontend`.
-
-Notes:
-
-- On Render's free tier the disk is not persistent, so a rate card uploaded through the admin page is lost when the service restarts or redeploys. The rate card is not in git, so a fresh deploy starts without one: upload it through the admin page after each deploy, or use a paid instance with a disk and set `RATES_FILE`.
-- Everyone with the site password can see prices. Change `SITE_PASSWORD` if it is shared outside the team.
-
-## Git workflow
-
-```bash
-git add .
-git commit -m "Describe what you changed"
-git push
-```
-
-For larger changes such as a redesign, work on a branch:
-
-```bash
-git checkout -b prettier-ui
-# make changes, commit them, then merge into main when happy
-```
+| POST | `/api/login` | Public | Username + password → token (8 hours). Locks for 5 minutes after 5 wrong attempts |
+| GET | `/api/me` · POST `/api/me/password` | Signed in | Your account · change your password |
+| GET | `/api/destinations` | Signed in | Countries for the search box |
+| GET | `/api/rates-info` | Signed in | Rate card date, counts and fuel surcharges |
+| POST | `/api/calculate` | Signed in | Compare every service for a shipment |
+| POST | `/api/quotes` | Signed in | Submit a comparison to the history (prices are recalculated on the server) |
+| GET | `/api/admin/stats` | Admin | Dashboard figures for a date range |
+| GET | `/api/admin/quotes` · `/quotes/{id}` · `/quotes/export` | Admin | History list, one quote, Excel export |
+| GET/POST/PATCH | `/api/admin/users` | Admin | List, create and update accounts |
+| GET/POST | `/api/admin/rate-cards` · `/preview` · `/{id}/activate` · `/{id}/download` | Admin | Rate card versions |
+| GET | `/api/admin/rate-card/country` · `/rate-card/health` | Admin | Price tables for a country · data check |
+| GET/PUT | `/api/admin/settings` | Admin | Fuel surcharges and rate card age warning |
+| GET | `/api/admin/activity` | Admin | Activity log |
 
 ## Security checklist before real use
 
-- [ ] Change `ADMIN_PASSWORD` and `SITE_PASSWORD` from the defaults
 - [ ] Set a long random `SECRET_KEY`
-- [ ] Never commit your `.env` file
-- [ ] Replace the `YOUR-BACKEND-NAME` placeholder in `frontend/vercel.json` if deploying to Vercel
+- [ ] Change the first admin's password (sign in, then use the key icon in the header)
+- [ ] Never commit `.env`, `backend/data/` or the rate card. All three are already in `.gitignore`
+- [ ] Give each staff member their own account, and deactivate accounts when people leave
 - [ ] Consider limiting CORS `allow_origins` in `backend/app.py` to your own domain
