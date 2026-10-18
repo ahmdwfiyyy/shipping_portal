@@ -3,267 +3,196 @@ Logistics Rate & Shipping Portal - FastAPI backend (international export rates f
 
 Run locally:   uvicorn app:app --reload --port 8000
 API docs:      http://localhost:8000/docs
+
+Staff: compare rates and submit a comparison to the history.
+Admin: everything staff can do, plus the dashboard, history, rate cards, users and settings (admin.py).
 """
-import io
-import math
-import os
-import shutil
-from typing import Optional
-from datetime import datetime, timedelta, timezone
+import json
+from contextlib import asynccontextmanager
 
-import jwt
-import pandas as pd
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
 
-# ----------------------------------------------------------------- config
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-# The rate card is confidential, so it is git-ignored and must be placed next to app.py by hand
-SEED_FILE = os.path.join(BASE_DIR, "DATA EXTRACT Rev1.xlsx")
-# In production you can point RATES_FILE at a persistent disk, e.g. /data/rates.xlsx
-RATES_FILE = os.getenv("RATES_FILE", SEED_FILE)
-if not os.path.exists(RATES_FILE) and os.path.exists(SEED_FILE):  # fresh disk: copy the local rate card
-    os.makedirs(os.path.dirname(RATES_FILE), exist_ok=True)
-    shutil.copy(SEED_FILE, RATES_FILE)
-SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")  # set a real one via env var
-ALGORITHM = "HS256"
-TOKEN_HOURS = 8
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
-SITE_PASSWORD = os.getenv("SITE_PASSWORD", "staff123")  # shared password for everyone allowed to use the site
+import pricing
+import store
+from admin import router as admin_router
+from auth import (
+    TOKEN_HOURS,
+    check_not_locked,
+    check_password_rules,
+    clear_failures,
+    create_token,
+    current_user,
+    hash_password,
+    log_activity,
+    record_failure,
+    verify_password,
+)
+from db import Quote, User, get_db, iso, utcnow
 
-MAPPING_SHEET = "COUNTRY MAPPING"
-RATES_SHEET = "MASTER RATE"
-REQUIRED_SHEETS = {
-    MAPPING_SHEET: ["CountryOption", "Carrier", "ServiceKey", "ServiceName", "RateZone", "RateScope"],
-    RATES_SHEET: ["ServiceKey", "ZoneCode", "RateScope", "Container", "RateType", "WeightFrom", "WeightTo", "RateMYR"],
-}
-PER_SHIPMENT = "per shipment"  # RateType values are compared in lower case
-PER_KG = "per kg"
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-ADMIN_HASH = pwd_context.hash(ADMIN_PASSWORD)  # we only keep the hashes in memory
-SITE_HASH = pwd_context.hash(SITE_PASSWORD)
-bearer = HTTPBearer(auto_error=False)
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    store.bootstrap()
+    yield
 
-app = FastAPI(title="Logistics Rate & Shipping Portal")
 
-# 1. CORS - all headers and methods allowed
+app = FastAPI(title="Logistics Rate & Shipping Portal", lifespan=lifespan)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(admin_router)
 
 
-# ----------------------------------------------------------------- models
+# ----------------------------------------------------------------- request bodies
 class LoginRequest(BaseModel):
+    username: str
     password: str
 
 
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class Piece(BaseModel):
+    length: float = Field(gt=0, le=20)  # metres
+    width: float = Field(gt=0, le=20)
+    height: float = Field(gt=0, le=20)
+    weight: float = Field(gt=0, le=20000)  # kg, per piece
+    quantity: int = Field(default=1, ge=1, le=999)
+
+
 class CalculateRequest(BaseModel):
-    destination: str
-    length: float = Field(gt=0)
-    width: float = Field(gt=0)
-    height: float = Field(gt=0)
-    actual_weight: float = Field(gt=0)
+    destination: str = Field(min_length=1, max_length=150)
+    pieces: list[Piece] = Field(min_length=1, max_length=50)
 
 
-# ----------------------------------------------------------------- auth
-def create_token(role: str) -> str:
-    """role is 'user' (site password) or 'admin' (admin password)."""
-    payload = {"sub": role, "role": role, "exp": datetime.now(timezone.utc) + timedelta(hours=TOKEN_HOURS)}
-    return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+class SubmitQuoteRequest(CalculateRequest):
+    service_key: str
+    customer_ref: str = Field(default="", max_length=100)
+    remarks: str = Field(default="", max_length=1000)
 
 
-def verify_user(creds: Optional[HTTPAuthorizationCredentials] = Depends(bearer)) -> dict:
-    """Dependency: any logged-in person (staff or admin)."""
-    if creds is None:
-        raise HTTPException(status_code=401, detail="Please log in")
-    try:
-        return jwt.decode(creds.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Session expired, please log in again")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-
-def verify_token(user: dict = Depends(verify_user)) -> dict:
-    """Dependency that protects admin endpoints."""
-    if user.get("role") != "admin":
-        raise HTTPException(status_code=403, detail="Admin access required")
-    return user
+# ----------------------------------------------------------------- account
+def user_to_dict(user: User) -> dict:
+    return {"id": user.id, "username": user.username, "full_name": user.full_name, "role": user.role}
 
 
 @app.post("/api/login")
-def login(body: LoginRequest):
-    # The admin password also works at the front door and gives admin rights
-    if pwd_context.verify(body.password, ADMIN_HASH):
-        role = "admin"
-    elif pwd_context.verify(body.password, SITE_HASH):
-        role = "user"
-    else:
-        raise HTTPException(status_code=401, detail="Incorrect password")
-    return {"token": create_token(role), "role": role, "expires_in_hours": TOKEN_HOURS}
+def login(body: LoginRequest, db: Session = Depends(get_db)):
+    username = body.username.strip().lower()
+    check_not_locked(username)
+    user = db.scalar(select(User).where(func.lower(User.username) == username))
+    if user is None or not verify_password(body.password, user.password_hash):
+        record_failure(username)
+        raise HTTPException(status_code=401, detail="Incorrect username or password")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="This account has been deactivated. Please contact your administrator.")
+
+    clear_failures(username)
+    user.last_login_at = utcnow()
+    log_activity(db, user.username, "login")
+    db.commit()
+    return {"token": create_token(user), "user": user_to_dict(user), "expires_in_hours": TOKEN_HOURS}
 
 
-# ----------------------------------------------------------------- data helpers
-def clean_code(value) -> str:
-    """Zone codes can come out of Excel as 1, 1.0 or "1 " - make them all "1"."""
-    if isinstance(value, float) and value.is_integer():
-        value = int(value)
-    return str(value).strip()
+@app.get("/api/me")
+def me(user: User = Depends(current_user)):
+    return user_to_dict(user)
 
 
-_cache: dict = {"mtime": None, "data": None}
+@app.post("/api/me/password")
+def change_password(body: ChangePasswordRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Your current password is incorrect")
+    check_password_rules(body.new_password)
+    user.password_hash = hash_password(body.new_password)
+    log_activity(db, user.username, "password_changed")
+    db.commit()
+    return {"message": "Password updated"}
 
 
-def load_rates():
-    """Read the rate card, re-reading it only when the file has changed."""
-    try:
-        mtime = os.path.getmtime(RATES_FILE)
-    except OSError:
-        raise HTTPException(status_code=500, detail="Rate card not found on server")
-    if _cache["mtime"] == mtime:
-        return _cache["data"]
-
-    sheets = pd.read_excel(RATES_FILE, sheet_name=[MAPPING_SHEET, RATES_SHEET])
-    zones, rates = sheets[MAPPING_SHEET], sheets[RATES_SHEET]
-    for col in ["CountryOption", "Carrier", "ServiceKey", "ServiceName", "RateScope"]:
-        zones[col] = zones[col].astype(str).str.strip()
-    zones["RateZone"] = zones["RateZone"].map(clean_code)
-    for col in ["ServiceKey", "RateScope", "Container"]:
-        rates[col] = rates[col].astype(str).str.strip()
-    rates["ZoneCode"] = rates["ZoneCode"].map(clean_code)
-    rates["RateType"] = rates["RateType"].astype(str).str.strip().str.lower()
-    rates = rates.dropna(subset=["WeightFrom", "WeightTo", "RateMYR"])
-
-    _cache.update(mtime=mtime, data=(zones, rates))
-    return zones, rates
-
-
-def price_service(table: pd.DataFrame, chargeable: float):
-    """Price one service/zone. Returns (billed_weight, rate_type, rate_per_kg, total) or None.
-
-    - Up to the heaviest per-shipment row: use the first weight break at or above the
-      chargeable weight (e.g. 7.2 kg is billed at the 7.5 kg price).
-    - Above that: round up to a whole kg and multiply by the per-kg rate of the band it falls in.
-    """
-    w = round(chargeable, 6)  # avoid float noise such as 7.2000000001
-    flat = table[table["RateType"] == PER_SHIPMENT]
-    breaks = flat[flat["WeightTo"] >= w]
-    if not breaks.empty:
-        row = breaks.sort_values("WeightTo").iloc[0]
-        return float(row["WeightTo"]), "per_shipment", None, round(float(row["RateMYR"]), 2)
-
-    billed = float(math.ceil(w))
-    bands = table[(table["RateType"] == PER_KG) & (table["WeightFrom"] <= billed)]
-    if bands.empty:
-        return None
-    row = bands.sort_values("WeightFrom").iloc[-1]
-    if billed > float(row["WeightTo"]):
-        return None  # heavier than this service accepts
-    per_kg = float(row["RateMYR"])
-    return billed, "per_kg", per_kg, round(billed * per_kg, 2)
-
-
-# ----------------------------------------------------------------- endpoints (login required)
+# ----------------------------------------------------------------- rates (any signed-in user)
 @app.get("/api/destinations")
-def destinations(_: dict = Depends(verify_user)):
+def destinations(_: User = Depends(current_user), db: Session = Depends(get_db)):
     """Destinations for the search box, with how many services deliver there."""
-    zones, _ = load_rates()
-    counts = zones.groupby("CountryOption")["ServiceKey"].nunique()
-    return {"destinations": [{"name": name, "services": int(n)} for name, n in sorted(counts.items())]}
+    _, card = store.active_card(db)
+    return {"destinations": pricing.destinations(card)}
 
 
 @app.get("/api/rates-info")
-def rates_info(_: dict = Depends(verify_user)):
-    """Rate card summary shown in the page header and hero (last change + counts)."""
-    zones, _ = load_rates()
-    modified = datetime.fromtimestamp(os.path.getmtime(RATES_FILE), tz=timezone.utc)
+def rates_info(_: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Rate card summary shown in the page header and hero."""
+    meta, card = store.active_card(db)
     return {
-        "last_updated": modified.isoformat(),
-        "couriers": int(zones["Carrier"].nunique()),
-        "services": int(zones["ServiceKey"].nunique()),
-        "destinations": int(zones["CountryOption"].nunique()),
+        "last_updated": iso(meta.effective_date),
+        "couriers": int(card.zones["Carrier"].nunique()),
+        "services": int(card.zones["ServiceKey"].nunique()),
+        "destinations": int(card.zones["CountryOption"].nunique()),
+        "fuel": store.fuel_rates(db),
     }
 
 
-@app.post("/api/calculate")
-def calculate(body: CalculateRequest, _: dict = Depends(verify_user)):
-    zones, rates = load_rates()
-
-    # Sizes arrive in metres: m³ x 200 is the same as cm³ / 5000
-    volumetric = body.length * body.width * body.height * 200
-    chargeable = max(body.actual_weight, volumetric)
-
-    matches = zones[zones["CountryOption"].str.lower() == body.destination.strip().lower()]
-    if matches.empty:
+def run_comparison(db: Session, body: CalculateRequest):
+    meta, card = store.active_card(db)
+    pieces = [p.model_dump() for p in body.pieces]
+    summary = pricing.shipment_weights(pieces)
+    zones = card.zones
+    if zones[zones["CountryOption"].str.lower() == body.destination.strip().lower()].empty:
         raise HTTPException(status_code=404, detail=f"No courier serves '{body.destination}'")
-
-    results = []
-    for _, m in matches.iterrows():
-        table = rates[
-            (rates["ServiceKey"] == m["ServiceKey"])
-            & (rates["ZoneCode"] == m["RateZone"])
-            & (rates["RateScope"] == m["RateScope"])
-        ]
-        priced = price_service(table, chargeable)
-        if priced is None:
-            continue
-        billed, rate_type, per_kg, total = priced
-        results.append({
-            "courier": m["ServiceName"],
-            "carrier": m["Carrier"],
-            "service_key": m["ServiceKey"],
-            "zone_code": m["RateZone"],
-            "container": str(table["Container"].iloc[0]),
-            "volumetric_weight": round(volumetric, 2),
-            "chargeable_weight": round(chargeable, 2),
-            "billed_weight": billed,
-            "rate_type": rate_type,
-            "rate_per_kg": per_kg,
-            "total_cost": total,
-            "is_cheapest": False,
-        })
-
+    results = pricing.compare(card, body.destination, summary["chargeable_weight"], store.fuel_rates(db))
     if not results:
-        raise HTTPException(status_code=404, detail="No rates found for this destination and weight")
-
-    results.sort(key=lambda x: x["total_cost"])
-    results[0]["is_cheapest"] = True
-    return {"destination": body.destination, "results": results}
+        raise HTTPException(status_code=404, detail="No service can carry this weight to the destination")
+    return meta, pieces, summary, results
 
 
-# ----------------------------------------------------------------- admin endpoint
-@app.post("/api/upload-rates")
-async def upload_rates(file: UploadFile = File(...), _: dict = Depends(verify_token)):
-    name = (file.filename or "").lower()
-    if not name.endswith((".xlsx", ".xls")):
-        raise HTTPException(status_code=400, detail="Please upload an .xlsx or .xls file")
+@app.post("/api/calculate")
+def calculate(body: CalculateRequest, _: User = Depends(current_user), db: Session = Depends(get_db)):
+    _, _, summary, results = run_comparison(db, body)
+    return {"destination": body.destination, "summary": summary, "results": results}
 
-    content = await file.read()
-    try:
-        sheets = pd.read_excel(io.BytesIO(content), sheet_name=None)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Could not read the Excel file")
 
-    # Validate BEFORE touching the existing rate card
-    for sheet, columns in REQUIRED_SHEETS.items():
-        if sheet not in sheets:
-            raise HTTPException(status_code=400, detail=f"Missing required sheet: '{sheet}'")
-        missing = [c for c in columns if c not in sheets[sheet].columns]
-        if missing:
-            raise HTTPException(status_code=400, detail=f"Sheet '{sheet}' is missing columns: {', '.join(missing)}")
+@app.post("/api/quotes")
+def submit_quote(body: SubmitQuoteRequest, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    """Save a comparison to the history. Prices are worked out again here, so they cannot be edited
+    in the browser, and they are frozen - later rate card changes do not alter saved quotes."""
+    meta, pieces, summary, results = run_comparison(db, body)
+    chosen = next((r for r in results if r["service_key"] == body.service_key), None)
+    if chosen is None:
+        raise HTTPException(status_code=400, detail="The selected service is not available for this shipment")
 
-    # Write in place (a Docker single-file bind mount can't be swapped out with rename)
-    os.makedirs(os.path.dirname(RATES_FILE), exist_ok=True)
-    with pd.ExcelWriter(RATES_FILE, engine="openpyxl") as writer:
-        for sheet in REQUIRED_SHEETS:
-            sheets[sheet].to_excel(writer, sheet_name=sheet, index=False)
-    _cache["mtime"] = None  # make the next request re-read the new file
-
-    return {"message": "Rate card updated successfully", "rows": {s: len(sheets[s]) for s in REQUIRED_SHEETS}}
+    quote = Quote(
+        user_id=user.id,
+        staff_name=user.full_name,
+        destination=body.destination.strip(),
+        pieces_json=json.dumps(pieces),
+        total_pieces=summary["pieces"],
+        cbm=summary["cbm"],
+        actual_weight=summary["actual_weight"],
+        volumetric_weight=summary["volumetric_weight"],
+        chargeable_weight=summary["chargeable_weight"],
+        selected_service=chosen["courier"],
+        selected_carrier=chosen["carrier"],
+        selected_total=chosen["total_cost"],
+        cheapest_total=results[0]["total_cost"],
+        highest_total=results[-1]["total_cost"],
+        results_json=json.dumps(results),
+        customer_ref=body.customer_ref.strip(),
+        remarks=body.remarks.strip(),
+        rate_card_id=meta.id,
+    )
+    db.add(quote)
+    db.flush()  # gives the quote its id
+    quote.reference_no = f"QT-{quote.created_at:%Y%m%d}-{quote.id:05d}"
+    log_activity(db, user.username, "quote_submitted",
+                 f"{quote.reference_no}: {quote.destination}, {chosen['courier']} RM {chosen['total_cost']:.2f}")
+    db.commit()
+    return store.quote_to_dict(quote)

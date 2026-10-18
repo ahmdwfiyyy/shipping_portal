@@ -9,3 +9,6 @@ __pycache__
 backend/DATA EXTRACT*.xlsx
 # Excel lock files created while a workbook is open
 ~$*
+# Local database (quote history, accounts) - never commit
+backend/data/
+.pytest_cache

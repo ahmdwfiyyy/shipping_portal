@@ -1,2 +1,6 @@
 __pycache__
 .venv
+data
+tests
+.pytest_cache
+*.xlsx
