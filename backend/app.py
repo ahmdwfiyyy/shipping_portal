@@ -1,5 +1,5 @@
 """
-Logistics Rate & Shipping Portal - FastAPI backend.
+Logistics Rate & Shipping Portal - FastAPI backend (international export rates from Malaysia).
 
 Run locally:   uvicorn app:app --reload --port 8000
 API docs:      http://localhost:8000/docs
@@ -21,10 +21,11 @@ from pydantic import BaseModel, Field
 
 # ----------------------------------------------------------------- config
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-SEED_FILE = os.path.join(BASE_DIR, "rates.xlsx")  # the rate card shipped with the code
+# The rate card is confidential, so it is git-ignored and must be placed next to app.py by hand
+SEED_FILE = os.path.join(BASE_DIR, "DATA EXTRACT Rev1.xlsx")
 # In production you can point RATES_FILE at a persistent disk, e.g. /data/rates.xlsx
 RATES_FILE = os.getenv("RATES_FILE", SEED_FILE)
-if not os.path.exists(RATES_FILE):  # first start on a fresh disk: copy the shipped rate card
+if not os.path.exists(RATES_FILE) and os.path.exists(SEED_FILE):  # fresh disk: copy the local rate card
     os.makedirs(os.path.dirname(RATES_FILE), exist_ok=True)
     shutil.copy(SEED_FILE, RATES_FILE)
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")  # set a real one via env var
@@ -33,10 +34,14 @@ TOKEN_HOURS = 8
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 SITE_PASSWORD = os.getenv("SITE_PASSWORD", "staff123")  # shared password for everyone allowed to use the site
 
+MAPPING_SHEET = "COUNTRY MAPPING"
+RATES_SHEET = "MASTER RATE"
 REQUIRED_SHEETS = {
-    "Zone_Mapping": ["Courier", "Destination", "Zone Code"],
-    "Rates": ["Courier", "Zone Code", "Base Weight (kg)", "Base Price (MYR)", "Incremental Price per 0.5kg"],
+    MAPPING_SHEET: ["CountryOption", "Carrier", "ServiceKey", "ServiceName", "RateZone", "RateScope"],
+    RATES_SHEET: ["ServiceKey", "ZoneCode", "RateScope", "Container", "RateType", "WeightFrom", "WeightTo", "RateMYR"],
 }
+PER_SHIPMENT = "per shipment"  # RateType values are compared in lower case
+PER_KG = "per kg"
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 ADMIN_HASH = pwd_context.hash(ADMIN_PASSWORD)  # we only keep the hashes in memory
@@ -106,37 +111,84 @@ def login(body: LoginRequest):
 
 
 # ----------------------------------------------------------------- data helpers
+def clean_code(value) -> str:
+    """Zone codes can come out of Excel as 1, 1.0 or "1 " - make them all "1"."""
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    return str(value).strip()
+
+
+_cache: dict = {"mtime": None, "data": None}
+
+
 def load_rates():
+    """Read the rate card, re-reading it only when the file has changed."""
     try:
-        sheets = pd.read_excel(RATES_FILE, sheet_name=["Zone_Mapping", "Rates"])
-    except FileNotFoundError:
-        raise HTTPException(status_code=500, detail="rates.xlsx not found on server")
-    zones, rates = sheets["Zone_Mapping"], sheets["Rates"]
-    for df in (zones, rates):
-        df["Courier"] = df["Courier"].astype(str).str.strip()
-        df["Zone Code"] = df["Zone Code"].astype(str).str.strip()
-    zones["Destination"] = zones["Destination"].astype(str).str.strip()
+        mtime = os.path.getmtime(RATES_FILE)
+    except OSError:
+        raise HTTPException(status_code=500, detail="Rate card not found on server")
+    if _cache["mtime"] == mtime:
+        return _cache["data"]
+
+    sheets = pd.read_excel(RATES_FILE, sheet_name=[MAPPING_SHEET, RATES_SHEET])
+    zones, rates = sheets[MAPPING_SHEET], sheets[RATES_SHEET]
+    for col in ["CountryOption", "Carrier", "ServiceKey", "ServiceName", "RateScope"]:
+        zones[col] = zones[col].astype(str).str.strip()
+    zones["RateZone"] = zones["RateZone"].map(clean_code)
+    for col in ["ServiceKey", "RateScope", "Container"]:
+        rates[col] = rates[col].astype(str).str.strip()
+    rates["ZoneCode"] = rates["ZoneCode"].map(clean_code)
+    rates["RateType"] = rates["RateType"].astype(str).str.strip().str.lower()
+    rates = rates.dropna(subset=["WeightFrom", "WeightTo", "RateMYR"])
+
+    _cache.update(mtime=mtime, data=(zones, rates))
     return zones, rates
+
+
+def price_service(table: pd.DataFrame, chargeable: float):
+    """Price one service/zone. Returns (billed_weight, rate_type, rate_per_kg, total) or None.
+
+    - Up to the heaviest per-shipment row: use the first weight break at or above the
+      chargeable weight (e.g. 7.2 kg is billed at the 7.5 kg price).
+    - Above that: round up to a whole kg and multiply by the per-kg rate of the band it falls in.
+    """
+    w = round(chargeable, 6)  # avoid float noise such as 7.2000000001
+    flat = table[table["RateType"] == PER_SHIPMENT]
+    breaks = flat[flat["WeightTo"] >= w]
+    if not breaks.empty:
+        row = breaks.sort_values("WeightTo").iloc[0]
+        return float(row["WeightTo"]), "per_shipment", None, round(float(row["RateMYR"]), 2)
+
+    billed = float(math.ceil(w))
+    bands = table[(table["RateType"] == PER_KG) & (table["WeightFrom"] <= billed)]
+    if bands.empty:
+        return None
+    row = bands.sort_values("WeightFrom").iloc[-1]
+    if billed > float(row["WeightTo"]):
+        return None  # heavier than this service accepts
+    per_kg = float(row["RateMYR"])
+    return billed, "per_kg", per_kg, round(billed * per_kg, 2)
 
 
 # ----------------------------------------------------------------- endpoints (login required)
 @app.get("/api/destinations")
 def destinations(_: dict = Depends(verify_user)):
-    """List of destinations (for the dropdown on the calculator form)."""
+    """Destinations for the search box, with how many services deliver there."""
     zones, _ = load_rates()
-    return {"destinations": sorted(zones["Destination"].unique().tolist())}
+    counts = zones.groupby("CountryOption")["ServiceKey"].nunique()
+    return {"destinations": [{"name": name, "services": int(n)} for name, n in sorted(counts.items())]}
 
 
 @app.get("/api/rates-info")
 def rates_info(_: dict = Depends(verify_user)):
     """Rate card summary shown in the page header and hero (last change + counts)."""
-    zones, rates = load_rates()
+    zones, _ = load_rates()
     modified = datetime.fromtimestamp(os.path.getmtime(RATES_FILE), tz=timezone.utc)
     return {
         "last_updated": modified.isoformat(),
-        "couriers": int(rates["Courier"].nunique()),
-        "zones": int(rates["Zone Code"].nunique()),
-        "destinations": int(zones["Destination"].nunique()),
+        "couriers": int(zones["Carrier"].nunique()),
+        "services": int(zones["ServiceKey"].nunique()),
+        "destinations": int(zones["CountryOption"].nunique()),
     }
 
 
@@ -144,37 +196,42 @@ def rates_info(_: dict = Depends(verify_user)):
 def calculate(body: CalculateRequest, _: dict = Depends(verify_user)):
     zones, rates = load_rates()
 
-    volumetric = (body.length * body.width * body.height) / 5000
+    # Sizes arrive in metres: m³ x 200 is the same as cm³ / 5000
+    volumetric = body.length * body.width * body.height * 200
     chargeable = max(body.actual_weight, volumetric)
 
-    matches = zones[zones["Destination"].str.lower() == body.destination.strip().lower()]
+    matches = zones[zones["CountryOption"].str.lower() == body.destination.strip().lower()]
     if matches.empty:
         raise HTTPException(status_code=404, detail=f"No courier serves '{body.destination}'")
 
     results = []
     for _, m in matches.iterrows():
-        row = rates[(rates["Courier"] == m["Courier"]) & (rates["Zone Code"] == m["Zone Code"])]
-        if row.empty:
+        table = rates[
+            (rates["ServiceKey"] == m["ServiceKey"])
+            & (rates["ZoneCode"] == m["RateZone"])
+            & (rates["RateScope"] == m["RateScope"])
+        ]
+        priced = price_service(table, chargeable)
+        if priced is None:
             continue
-        r = row.iloc[0]
-        base_w = float(r["Base Weight (kg)"])
-        base_p = float(r["Base Price (MYR)"])
-        inc_p = float(r["Incremental Price per 0.5kg"])
-
-        # round() avoids float noise such as 0.5000000001 creating an extra step
-        steps = math.ceil(round(max(0.0, chargeable - base_w) / 0.5, 6))
+        billed, rate_type, per_kg, total = priced
         results.append({
-            "courier": m["Courier"],
-            "zone_code": m["Zone Code"],
+            "courier": m["ServiceName"],
+            "carrier": m["Carrier"],
+            "service_key": m["ServiceKey"],
+            "zone_code": m["RateZone"],
+            "container": str(table["Container"].iloc[0]),
             "volumetric_weight": round(volumetric, 2),
             "chargeable_weight": round(chargeable, 2),
-            "incremental_steps": steps,
-            "total_cost": round(base_p + steps * inc_p, 2),
+            "billed_weight": billed,
+            "rate_type": rate_type,
+            "rate_per_kg": per_kg,
+            "total_cost": total,
             "is_cheapest": False,
         })
 
     if not results:
-        raise HTTPException(status_code=404, detail="No rates found for this destination")
+        raise HTTPException(status_code=404, detail="No rates found for this destination and weight")
 
     results.sort(key=lambda x: x["total_cost"])
     results[0]["is_cheapest"] = True
@@ -194,7 +251,7 @@ async def upload_rates(file: UploadFile = File(...), _: dict = Depends(verify_to
     except Exception:
         raise HTTPException(status_code=400, detail="Could not read the Excel file")
 
-    # Validate BEFORE touching the existing rates.xlsx
+    # Validate BEFORE touching the existing rate card
     for sheet, columns in REQUIRED_SHEETS.items():
         if sheet not in sheets:
             raise HTTPException(status_code=400, detail=f"Missing required sheet: '{sheet}'")
@@ -203,8 +260,10 @@ async def upload_rates(file: UploadFile = File(...), _: dict = Depends(verify_to
             raise HTTPException(status_code=400, detail=f"Sheet '{sheet}' is missing columns: {', '.join(missing)}")
 
     # Write in place (a Docker single-file bind mount can't be swapped out with rename)
+    os.makedirs(os.path.dirname(RATES_FILE), exist_ok=True)
     with pd.ExcelWriter(RATES_FILE, engine="openpyxl") as writer:
         for sheet in REQUIRED_SHEETS:
             sheets[sheet].to_excel(writer, sheet_name=sheet, index=False)
+    _cache["mtime"] = None  # make the next request re-read the new file
 
     return {"message": "Rate card updated successfully", "rows": {s: len(sheets[s]) for s in REQUIRED_SHEETS}}

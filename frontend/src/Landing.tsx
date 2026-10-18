@@ -35,7 +35,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
     [
       <ArrowIcon className="h-6 w-6" />,
       "Priced by destination",
-      "Pick the destination and the right zone rate is applied for every courier. No lookup tables needed.",
+      "Search for the country and the right zone rate is applied for every courier. No lookup tables needed.",
     ],
     [
       <UploadIcon className="h-6 w-6" />,
@@ -51,7 +51,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
 
   const steps: [string, string][] = [
     ["Sign in", "Use the password your administrator gave you."],
-    ["Enter parcel details", "Choose the destination, then add the length, width, height and actual weight."],
+    ["Enter parcel details", "Search for the destination country, then add the length, width, height and actual weight."],
     ["Compare and choose", "Review the price from every courier and pick the best option for the shipment."],
   ];
 
@@ -84,7 +84,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               </div>
               <h1 className="text-4xl font-extrabold leading-[1.08] tracking-[-0.04em] sm:text-5xl">
                 The smarter way to ship
-                <span className="text-red-400"> across Malaysia.</span>
+                <span className="text-red-400"> from Malaysia to the world.</span>
               </h1>
               <p className="mt-5 max-w-xl text-base leading-7 text-blue-100 sm:text-lg">
                 Compare courier partners, see transparent pricing, and choose the right service in seconds. All in one place.
@@ -115,7 +115,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
               <div className="mt-5 space-y-3">
                 <div className="rounded-xl border border-blue-100 bg-brand-ice/60 px-4 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Volumetric weight</p>
-                  <p className="mt-0.5 text-sm font-bold text-slate-800">Length × Width × Height ÷ 5000</p>
+                  <p className="mt-0.5 text-sm font-bold text-slate-800">Length × Width × Height (m) × 200</p>
                 </div>
                 <div className="rounded-xl border border-blue-100 bg-brand-ice/60 px-4 py-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Chargeable weight</p>
@@ -125,7 +125,7 @@ export default function Landing({ onSignIn }: { onSignIn: () => void }) {
 
               <div className="mt-5 flex items-center justify-between gap-3 rounded-xl bg-brand-navy px-4 py-4 text-white">
                 <div className="text-sm">
-                  <p className="font-bold">40 × 30 × 30 cm box</p>
+                  <p className="font-bold">0.4 × 0.3 × 0.3 m box</p>
                   <p className="mt-0.5 text-xs text-blue-100">Actual 1.2 kg · volumetric 7.2 kg</p>
                 </div>
                 <span className="shrink-0 rounded-full bg-brand-red px-3 py-1.5 text-xs font-extrabold uppercase tracking-wide">

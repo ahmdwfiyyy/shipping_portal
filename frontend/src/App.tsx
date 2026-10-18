@@ -1,23 +1,44 @@
-import { useEffect, useState } from "react";
-import type { ChangeEvent, DragEvent, FormEvent, ReactNode } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ChangeEvent, DragEvent, FormEvent, KeyboardEvent, ReactNode } from "react";
 import carsemLogo from "./assets/carsem-logo.png";
 import Landing from "./Landing";
-import { ArrowIcon, Banner, Brand, CalculatorIcon, CheckIcon, FieldLabel, Spinner, TopBar, UploadIcon, inputCls, panel, redBtn } from "./Ui";
+import {
+  ArrowIcon,
+  Banner,
+  Brand,
+  CalculatorIcon,
+  CheckIcon,
+  FieldLabel,
+  SearchIcon,
+  Spinner,
+  TopBar,
+  UploadIcon,
+  inputCls,
+  panel,
+  redBtn,
+} from "./Ui";
 import type { Notice } from "./Ui";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 type Result = {
-  courier: string;
+  courier: string; // service name, e.g. "DHL Express"
+  carrier: string;
+  service_key: string;
   zone_code: string;
+  container: string; // "Pkg" (parcel) or "Pal" (pallet freight)
   chargeable_weight: number;
-  incremental_steps: number;
+  billed_weight: number;
+  rate_type: "per_shipment" | "per_kg";
+  rate_per_kg: number | null;
   total_cost: number;
   is_cheapest: boolean;
 };
 
-type RatesInfo = { last_updated: string; couriers: number; zones: number; destinations: number };
+type Destination = { name: string; services: number };
+
+type RatesInfo = { last_updated: string; couriers: number; services: number; destinations: number };
 
 // ---------------------------------------------------------------------------
 // API helper - talks to the FastAPI backend (/api is proxied in dev and in nginx)
@@ -69,7 +90,7 @@ function readSession(): Session | null {
 }
 
 // Courier badge colour, chosen by name (falls back to slate for new couriers)
-const accents: Record<string, string> = { skynet: "#0b3c91", ninja: "#ed2924", dhl: "#071b55" };
+const accents: Record<string, string> = { dhl: "#071b55", fedex: "#0b3c91", ups: "#ed2924" };
 function accentFor(name: string) {
   const key = Object.keys(accents).find((k) => name.toLowerCase().includes(k));
   return key ? accents[key] : "#475569";
@@ -121,7 +142,7 @@ function Hero({ info }: { info: RatesInfo | null }) {
   const stats: [string, string][] = info
     ? [
         [String(info.couriers), "Couriers"],
-        [String(info.zones), "Zones"],
+        [String(info.services), "Services"],
         [String(info.destinations), "Destinations"],
       ]
     : [];
@@ -139,7 +160,7 @@ function Hero({ info }: { info: RatesInfo | null }) {
           </div>
           <h1 className="text-3xl font-extrabold leading-tight tracking-[-0.04em] sm:text-4xl">
             The smarter way to ship
-            <span className="text-red-400"> across Malaysia.</span>
+            <span className="text-red-400"> from Malaysia to the world.</span>
           </h1>
           <p className="mt-3 max-w-xl text-sm leading-6 text-blue-100 sm:text-base">
             Compare courier partners, see transparent pricing, and choose the right service in seconds.
@@ -162,18 +183,135 @@ function Hero({ info }: { info: RatesInfo | null }) {
 }
 
 // ---------------------------------------------------------------------------
+// Destination search box: type to filter, arrow keys + Enter to pick
+// ---------------------------------------------------------------------------
+function DestinationSearch({
+  options,
+  value,
+  onChange,
+}: {
+  options: Destination[];
+  value: string;
+  onChange: (name: string) => void;
+}) {
+  const [query, setQuery] = useState(value);
+  const [open, setOpen] = useState(false);
+  const [active, setActive] = useState(0);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // Countries starting with the search text come first, then any that contain it
+  const q = query.trim().toLowerCase();
+  const matches = q
+    ? [
+        ...options.filter((o) => o.name.toLowerCase().startsWith(q)),
+        ...options.filter((o) => !o.name.toLowerCase().startsWith(q) && o.name.toLowerCase().includes(q)),
+      ]
+    : options;
+
+  useEffect(() => {
+    listRef.current?.children[active]?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  const pick = (name: string) => {
+    setQuery(name);
+    onChange(name);
+    setOpen(false);
+  };
+
+  const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      setOpen(true);
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setActive((i) => (matches.length ? (i + step + matches.length) % matches.length : 0));
+    } else if (e.key === "Enter" && open && matches[active]) {
+      e.preventDefault(); // pick the highlighted country instead of submitting the form
+      pick(matches[active].name);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <SearchIcon className="pointer-events-none absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
+      <input
+        type="text"
+        required
+        role="combobox"
+        aria-expanded={open}
+        aria-controls="destination-list"
+        aria-autocomplete="list"
+        aria-activedescendant={open && matches[active] ? `destination-${active}` : undefined}
+        autoComplete="off"
+        placeholder={options.length ? `Search ${options.length} countries…` : "Search countries…"}
+        value={query}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setActive(0);
+          setOpen(true);
+          // Only a name picked from the list counts, unless the text matches one exactly
+          const exact = options.find((o) => o.name.toLowerCase() === e.target.value.trim().toLowerCase());
+          onChange(exact ? exact.name : "");
+        }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        onKeyDown={onKeyDown}
+        className={`${inputCls} pl-11`}
+      />
+
+      {open && (
+        <ul
+          id="destination-list"
+          role="listbox"
+          ref={listRef}
+          className="absolute z-20 mt-2 max-h-72 w-full overflow-y-auto rounded-xl border border-blue-100 bg-white py-1.5 shadow-[0_12px_35px_rgba(7,27,85,0.15)]"
+        >
+          {matches.length === 0 ? (
+            <li className="px-4 py-3 text-sm text-slate-500">No country matches "{query.trim()}"</li>
+          ) : (
+            matches.map((o, i) => (
+              <li
+                key={o.name}
+                id={`destination-${i}`}
+                role="option"
+                aria-selected={o.name === value}
+                // mousedown fires before the input's blur, so the click is not lost
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  pick(o.name);
+                }}
+                onMouseEnter={() => setActive(i)}
+                className={`flex cursor-pointer items-center justify-between gap-3 px-4 py-2.5 text-sm ${
+                  i === active ? "bg-brand-ice text-brand-navy" : "text-slate-700"
+                }`}
+              >
+                <span className={o.name === value ? "font-bold" : "font-medium"}>{o.name}</span>
+                <span className="shrink-0 text-xs text-slate-400">
+                  {o.services} service{o.services === 1 ? "" : "s"}
+                </span>
+              </li>
+            ))
+          )}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tab 1: Rate calculator (any signed-in user)
 // ---------------------------------------------------------------------------
 type FormKey = "length" | "width" | "height" | "weight";
 const sizeFields: [FormKey, string, string][] = [
-  ["length", "Length", "cm"],
-  ["width", "Width", "cm"],
-  ["height", "Height", "cm"],
+  ["length", "Length", "m"],
+  ["width", "Width", "m"],
+  ["height", "Height", "m"],
   ["weight", "Actual weight", "kg"],
 ];
 
 function Calculator() {
-  const [destinations, setDestinations] = useState<string[]>([]);
+  const [destinations, setDestinations] = useState<Destination[]>([]);
   const [form, setForm] = useState({ destination: "", length: "", width: "", height: "", weight: "" });
   const [results, setResults] = useState<Result[] | null>(null);
   const [selected, setSelected] = useState("");
@@ -181,7 +319,7 @@ function Calculator() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api<{ destinations: string[] }>("/api/destinations")
+    api<{ destinations: Destination[] }>("/api/destinations")
       .then((d) => setDestinations(d.destinations))
       .catch(() => setError("Could not load destinations. Is the backend running?"));
   }, []);
@@ -190,12 +328,15 @@ function Calculator() {
   const width = Number(form.width);
   const height = Number(form.height);
   const weight = Number(form.weight);
-  const cubic = length * width * height;
-  const volumeLitres = cubic / 1000;
-  const estChargeable = Math.max(weight, cubic / 5000);
+  const cbm = length * width * height; // sizes are in metres, so this is m³
+  const chargeable = Math.max(weight, cbm * 200); // same as cm³ / 5000
 
   const compare = async (event: FormEvent) => {
     event.preventDefault();
+    if (!form.destination) {
+      setError("Please choose a destination from the list.");
+      return;
+    }
     setError("");
     setLoading(true);
     try {
@@ -234,24 +375,11 @@ function Calculator() {
 
           <div>
             <FieldLabel>Destination</FieldLabel>
-            <div className="relative">
-              <select
-                required
-                value={form.destination}
-                onChange={(e) => setForm({ ...form, destination: e.target.value })}
-                className={`${inputCls} appearance-none`}
-              >
-                <option value="">Select destination…</option>
-                {destinations.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-              <svg viewBox="0 0 20 20" className="pointer-events-none absolute right-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-500" fill="currentColor" aria-hidden="true">
-                <path fillRule="evenodd" d="M5.3 7.7a1 1 0 0 1 1.4 0l3.3 3.3 3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z" clipRule="evenodd" />
-              </svg>
-            </div>
+            <DestinationSearch
+              options={destinations}
+              value={form.destination}
+              onChange={(destination) => setForm((f) => ({ ...f, destination }))}
+            />
           </div>
 
           <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -261,8 +389,8 @@ function Calculator() {
                 <div className="relative">
                   <input
                     type="number"
-                    min="0.1"
-                    step="0.1"
+                    min={key === "weight" ? "0.1" : "0.01"}
+                    step={key === "weight" ? "0.1" : "0.01"}
                     required
                     value={form[key]}
                     onChange={(e) => setForm({ ...form, [key]: e.target.value })}
@@ -277,11 +405,11 @@ function Calculator() {
           <div className="mt-7 flex flex-col gap-4 border-t border-slate-100 pt-6 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-center gap-5 text-sm text-slate-500">
               <span>
-                Volume <strong className="text-slate-800">{volumeLitres.toFixed(1)} L</strong>
+                CBM <strong className="text-slate-800">{cbm.toFixed(3)} m³</strong>
               </span>
               <span className="h-4 w-px bg-slate-200" />
               <span>
-                Est. chargeable <strong className="text-slate-800">{estChargeable.toFixed(1)} kg</strong>
+                Chargeable Weight <strong className="text-slate-800">{chargeable.toFixed(1)} kg</strong>
               </span>
             </div>
 
@@ -345,9 +473,16 @@ function Calculator() {
                           Best rate
                         </span>
                       )}
+                      {rate.container === "Pal" && (
+                        <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-extrabold uppercase tracking-wide text-slate-600">
+                          Pallet freight
+                        </span>
+                      )}
                     </span>
                     <span className="mt-1 block text-xs text-slate-500">
-                      {rate.incremental_steps} extra 0.5 kg step{rate.incremental_steps === 1 ? "" : "s"}
+                      {rate.rate_type === "per_kg"
+                        ? `RM ${rate.rate_per_kg?.toFixed(2)}/kg × ${rate.billed_weight} kg`
+                        : `Shipment rate for ${rate.billed_weight} kg`}
                     </span>
                   </span>
 
@@ -426,7 +561,7 @@ function LoginPage({ onSignIn, onBack, notice }: { onSignIn: (token: string) => 
           </div>
           <div>
             <p className="text-xl font-extrabold tracking-[-0.02em]">Shipping Rate Portal</p>
-            <p className="text-xs font-medium tracking-wide text-blue-100">Malaysia domestic delivery</p>
+            <p className="text-xs font-medium tracking-wide text-blue-100">International delivery from Malaysia</p>
           </div>
         </div>
 
@@ -612,8 +747,8 @@ function Admin({
         <div>
           <h2 className="text-xl font-extrabold tracking-[-0.02em] text-brand-navy">Upload courier rates</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Replace the current rates with an Excel file containing the sheets <strong>Zone_Mapping</strong> and{" "}
-            <strong>Rates</strong>.
+            Replace the current rates with an Excel file containing the sheets <strong>COUNTRY MAPPING</strong> and{" "}
+            <strong>MASTER RATE</strong>.
           </p>
         </div>
         <button

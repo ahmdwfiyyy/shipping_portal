@@ -9,8 +9,10 @@ services:
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
       - SITE_PASSWORD=${SITE_PASSWORD:-staff123}
     volumes:
-      # rates.xlsx MUST exist on your machine first, otherwise Docker creates a folder
-      - ./backend/rates.xlsx:/app/rates.xlsx
+      # The rate card MUST exist on your machine first, otherwise Docker creates a folder
+      - type: bind
+        source: "./backend/DATA EXTRACT Rev1.xlsx"
+        target: "/app/DATA EXTRACT Rev1.xlsx"
 
   frontend:
     build: ./frontend
