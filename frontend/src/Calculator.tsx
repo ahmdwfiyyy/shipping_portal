@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import type { Destination, Quote, Result, Summary } from "./api";
+import type { Destination, Quote, RatesInfo, Result, Summary } from "./api";
 import { api, errorText, num, postJson, rm } from "./api";
 import DestinationSearch from "./DestinationSearch";
 import QuoteSheet from "./QuoteSheet";
@@ -41,6 +41,12 @@ const pieceFields: [PieceKey, string, string, string][] = [
   ["weight", "Weight per box", "kg", "0.1"],
 ];
 
+const FUEL_CARRIERS: [string, string][] = [
+  ["DHL", "DHL"],
+  ["FDX", "FedEx"],
+  ["UPS", "UPS"],
+];
+
 let nextId = 1;
 const emptyPiece = (): PieceForm => ({ id: nextId++, length: "", width: "", height: "", weight: "", quantity: "1" });
 
@@ -77,11 +83,23 @@ export default function Calculator() {
   const [showQuote, setShowQuote] = useState(false);
   const [formKey, setFormKey] = useState(0);
 
+  // Fuel surcharge % per carrier: pre-filled with the admin's default, adjustable per comparison
+  const [defaultFuel, setDefaultFuel] = useState<Record<string, number>>({});
+  const [fuel, setFuel] = useState<Record<string, string>>({ DHL: "0", FDX: "0", UPS: "0" });
+
   useEffect(() => {
     api<{ destinations: Destination[] }>("/api/destinations")
       .then((d) => setDestinations(d.destinations))
       .catch((err) => setError(errorText(err)));
+    api<RatesInfo>("/api/rates-info")
+      .then((info) => {
+        setDefaultFuel(info.fuel);
+        setFuel(Object.fromEntries(FUEL_CARRIERS.map(([c]) => [c, String(info.fuel[c] ?? 0)])));
+      })
+      .catch(() => undefined);
   }, []);
+
+  const fuelChanged = FUEL_CARRIERS.some(([c]) => Number(fuel[c]) !== (defaultFuel[c] ?? 0));
 
   // Any change to the shipment makes the shown prices out of date
   const resetResults = () => {
@@ -107,6 +125,7 @@ export default function Calculator() {
       weight: Number(p.weight),
       quantity: Number(p.quantity) || 1,
     })),
+    fuel: Object.fromEntries(FUEL_CARRIERS.map(([c]) => [c, Number(fuel[c]) || 0])),
   });
 
   const compare = async (event: FormEvent) => {
@@ -274,6 +293,59 @@ export default function Calculator() {
                 Add another box
               </button>
             )}
+          </div>
+
+          {/* ---------- Fuel surcharge for this comparison ---------- */}
+          <div className="mt-6 rounded-xl border border-blue-50 bg-brand-ice/40 p-4 sm:p-5">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <span className="text-sm font-semibold text-slate-700">Fuel surcharge</span>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Added on top of each carrier's price. Pre-filled with the current default - change it if this month's carrier rate is different.
+                </p>
+              </div>
+              {fuelChanged && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFuel(Object.fromEntries(FUEL_CARRIERS.map(([c]) => [c, String(defaultFuel[c] ?? 0)])));
+                    resetResults();
+                  }}
+                  className="rounded-lg px-2 py-1 text-xs font-bold text-brand-blue hover:bg-white"
+                >
+                  Reset to default
+                </button>
+              )}
+            </div>
+            <div className="mt-3 grid grid-cols-3 gap-3 sm:max-w-xl">
+              {FUEL_CARRIERS.map(([code, name]) => (
+                <label key={code} className="block">
+                  <span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                    {name}
+                    {Number(fuel[code]) !== (defaultFuel[code] ?? 0) && (
+                      <span className="normal-case tracking-normal text-brand-red">(default {num(defaultFuel[code] ?? 0)}%)</span>
+                    )}
+                  </span>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      required
+                      aria-label={`${name} fuel surcharge in percent`}
+                      value={fuel[code]}
+                      onChange={(e) => {
+                        setFuel((f) => ({ ...f, [code]: e.target.value }));
+                        resetResults();
+                      }}
+                      className={`${inputCls} bg-white pr-9`}
+                    />
+                    <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sm font-semibold text-slate-400">%</span>
+                  </div>
+                </label>
+              ))}
+            </div>
           </div>
 
           <div className="mt-7 flex flex-col gap-4 border-t border-slate-100 pt-6 sm:flex-row sm:items-center sm:justify-between">

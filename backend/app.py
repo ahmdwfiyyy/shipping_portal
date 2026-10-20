@@ -9,6 +9,7 @@ Admin: everything staff can do, plus the dashboard, history, rate cards, users a
 """
 import json
 from contextlib import asynccontextmanager
+from typing import Annotated, Literal, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -70,9 +71,14 @@ class Piece(BaseModel):
     quantity: int = Field(default=1, ge=1, le=999)
 
 
+FuelPercent = Annotated[float, Field(ge=0, le=100)]
+
+
 class CalculateRequest(BaseModel):
     destination: str = Field(min_length=1, max_length=150)
     pieces: list[Piece] = Field(min_length=1, max_length=50)
+    # Fuel surcharge % per carrier chosen in the calculator; carriers left out use the admin's default
+    fuel: Optional[dict[Literal["DHL", "FDX", "UPS"], FuelPercent]] = None
 
 
 class SubmitQuoteRequest(CalculateRequest):
@@ -148,7 +154,8 @@ def run_comparison(db: Session, body: CalculateRequest):
     zones = card.zones
     if zones[zones["CountryOption"].str.lower() == body.destination.strip().lower()].empty:
         raise HTTPException(status_code=404, detail=f"No courier serves '{body.destination}'")
-    results = pricing.compare(card, body.destination, summary["chargeable_weight"], store.fuel_rates(db))
+    fuel = {**store.fuel_rates(db), **(body.fuel or {})}
+    results = pricing.compare(card, body.destination, summary["chargeable_weight"], fuel)
     if not results:
         raise HTTPException(status_code=404, detail="No service can carry this weight to the destination")
     return meta, pieces, summary, results

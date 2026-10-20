@@ -159,3 +159,33 @@ def test_rate_card_viewer(client, admin_headers):
 def test_activity_log_records_actions(client, admin_headers):
     actions = {a["action"] for a in client.get("/api/admin/activity", headers=admin_headers).json()["items"]}
     assert {"login", "quote_submitted", "rate_card_uploaded"} <= actions
+
+
+# ----------------------------------------------------------------- fuel surcharge chosen in the calculator
+def test_fuel_from_calculator_overrides_default(client, admin_headers, staff_headers):
+    client.put("/api/admin/settings", headers=admin_headers,
+               json={"fuel": {"DHL": 10, "FDX": 10, "UPS": 10}, "card_max_age_months": 12})
+    body = {**SHIPMENT, "fuel": {"DHL": 25, "FDX": 0}}  # UPS left out -> default 10% (not in this card anyway)
+    results = {r["carrier"]: r for r in client.post("/api/calculate", headers=staff_headers, json=body).json()["results"]}
+    assert results["DHL"]["fuel_pct"] == 25
+    assert results["DHL"]["total_cost"] == round(results["DHL"]["base_cost"] * 1.25, 2)
+    assert results["FDX"]["fuel_pct"] == 0
+    assert results["FDX"]["total_cost"] == results["FDX"]["base_cost"]
+
+    # The submitted quote keeps the percentages that were used
+    quote = client.post("/api/quotes", headers=staff_headers, json={**body, "service_key": "DHL-EXPRESS"}).json()
+    dhl = next(r for r in quote["results"] if r["carrier"] == "DHL")
+    assert dhl["fuel_pct"] == 25
+    assert quote["selected_total"] == dhl["total_cost"]
+
+    # Without a choice, the admin default still applies
+    plain = {r["carrier"]: r for r in client.post("/api/calculate", headers=staff_headers, json=SHIPMENT).json()["results"]}
+    assert plain["DHL"]["fuel_pct"] == 10
+    client.put("/api/admin/settings", headers=admin_headers,
+               json={"fuel": {"DHL": 0, "FDX": 0, "UPS": 0}, "card_max_age_months": 12})
+
+
+def test_fuel_out_of_range_rejected(client, staff_headers):
+    for bad in [{"DHL": -1}, {"DHL": 150}, {"XYZ": 5}]:
+        res = client.post("/api/calculate", headers=staff_headers, json={**SHIPMENT, "fuel": bad})
+        assert res.status_code == 422, bad

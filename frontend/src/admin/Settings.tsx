@@ -62,10 +62,11 @@ export default function Settings() {
       ) : (
         <form onSubmit={save} className="space-y-8">
           <div>
-            <h3 className="text-base font-extrabold text-brand-navy">Fuel surcharge</h3>
+            <h3 className="text-base font-extrabold text-brand-navy">Default fuel surcharge</h3>
             <p className="mt-1 max-w-2xl text-sm text-slate-500">
-              Carriers add a fuel surcharge that changes monthly. Enter the current percentage for each carrier and it is added to every
-              quoted price, so totals are closer to the real invoice. Use 0 if the rate card already includes it.
+              Carriers add a fuel surcharge that changes monthly. These percentages pre-fill the Rate Calculator for everyone; staff can
+              still change them for a single comparison, and each quotation records the percentage actually used. Use 0 if the rate card
+              already includes it.
             </p>
             <div className="mt-4 grid max-w-xl grid-cols-3 gap-4">
               {CARRIERS.map(([code, name]) => (
