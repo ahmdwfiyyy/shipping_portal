@@ -4,12 +4,19 @@ services:
     ports:
       - "8000:8000"
     environment:
-      # Values come from a local ".env" file (see .env.example)
+      # Values come from a local ".env" file (see env.example)
       - SECRET_KEY=${SECRET_KEY:-change-me}
+      - ADMIN_USERNAME=${ADMIN_USERNAME:-admin}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-admin123}
+      - ADMIN_FULL_NAME=${ADMIN_FULL_NAME:-Administrator}
+      - DATABASE_URL=${DATABASE_URL:-sqlite:////app/data/portal.db}
     volumes:
-      # rates.xlsx MUST exist on your machine first, otherwise Docker creates a folder
-      - ./backend/rates.xlsx:/app/rates.xlsx
+      # Accounts, quote history and rate card versions live here, so they survive restarts
+      - ./backend/data:/app/data
+      # Imported once into an empty database. The file MUST exist first, otherwise Docker creates a folder
+      - type: bind
+        source: "./backend/DATA EXTRACT Rev1.xlsx"
+        target: "/app/DATA EXTRACT Rev1.xlsx"
 
   frontend:
     build: ./frontend
